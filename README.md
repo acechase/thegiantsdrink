@@ -15,6 +15,8 @@ A text-based adventure game where you explore a castle, collect items, and face 
 
 ## Setup
 
+On macOS, check your Python interpreter with `python3 -c "import ssl; print(ssl.OPENSSL_VERSION)"`. If it reports LibreSSL, create the virtual environment with an OpenSSL-backed Python. For example, with uv installed, use `uv venv --python 3.11 --seed .venv` for the environment creation step below. [urllib3 TLS requirements](https://urllib3.readthedocs.io/en/stable/v2-migration-guide.html)
+
 ```bash
 # Clone the repository
 git clone https://github.com/acechase/thegiantsdrink.git
