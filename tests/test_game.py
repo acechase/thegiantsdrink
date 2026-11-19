@@ -314,9 +314,13 @@ OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 
 @pytest.fixture
-def openai_api(monkeypatch):
+def openai_api(monkeypatch, tmp_path):
+    import main
+
+    monkeypatch.setattr(main, "__file__", str(tmp_path / "main.py"))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_REASONING_EFFORT", raising=False)
     command_cache.clear()
     with responses.RequestsMock() as api:
         yield api
@@ -335,6 +339,8 @@ class TestCommandParser:
         assert request.headers["Authorization"] == "Bearer test-key"
         payload = json.loads(request.body)
         assert payload["model"] == "gpt-5.4-mini"
+        assert "reasoning_effort" not in payload
+        assert payload["max_completion_tokens"] == 100
         assert payload["messages"][0]["role"] == "developer"
         assert payload["messages"][1] == {"role": "user", "content": "go north"}
         assert payload["response_format"] == {"type": "json_object"}
@@ -381,11 +387,10 @@ class TestContentGenerator:
         assert cg.generate_description("Starting Room", {}, description="static desc") == "static desc"
 
 
-def test_missing_api_key(openai_api, monkeypatch, tmp_path):
+def test_missing_api_key(openai_api, monkeypatch):
     import main
 
     monkeypatch.delenv("OPENAI_API_KEY")
-    monkeypatch.setattr(main, "__file__", str(tmp_path / "main.py"))
     with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
         main.main()
     assert parse_command("go north") == (None, None)
@@ -393,15 +398,25 @@ def test_missing_api_key(openai_api, monkeypatch, tmp_path):
     assert not openai_api.calls
 
 
-def test_play_with_dotenv_key(openai_api, monkeypatch, tmp_path):
-    import main
-
+@pytest.mark.parametrize("effort", ["", "none", "low", "medium", "high", "xhigh", "max"])
+def test_play_with_dotenv_settings(openai_api, monkeypatch, tmp_path, effort):
     monkeypatch.delenv("OPENAI_API_KEY")
-    monkeypatch.setattr(main, "__file__", str(tmp_path / "main.py"))
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=dotenv-test-key\n")
-    output = _run_game(openai_api, ["I would like to leave"], [("quit", "game")])
+    (tmp_path / ".env").write_text(
+        f"OPENAI_API_KEY=dotenv-test-key\nOPENAI_MODEL=gpt-6-luna\nOPENAI_REASONING_EFFORT={effort}\n"
+    )
+    with patch.dict("os.environ"):
+        output = _run_game(openai_api, ["go north", "quit"], [("move", "north"), ("quit", "game")])
     assert "Thanks for playing" in output
-    assert openai_api.calls[0].request.headers["Authorization"] == "Bearer dotenv-test-key"
+    assert len(openai_api.calls) == 3  # Move, narrate the room, quit.
+    for call in openai_api.calls:
+        assert call.request.headers["Authorization"] == "Bearer dotenv-test-key"
+        payload = json.loads(call.request.body)
+        assert payload["model"] == "gpt-6-luna"
+        if effort:
+            assert payload["reasoning_effort"] == effort
+        else:
+            assert "reasoning_effort" not in payload
+        assert (payload["max_completion_tokens"] > 200) == (effort != "none")
 
 
 # ── End-to-End Game Loop ──────────────────────────────────────────

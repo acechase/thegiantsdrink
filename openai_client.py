@@ -5,6 +5,7 @@ from typing import Optional
 import requests
 
 logger = logging.getLogger(__name__)
+DEFAULT_MODEL = "gpt-5.4-mini"
 
 
 def complete(system_prompt: str, user_prompt: str, *, max_tokens: int, json_output: bool = False) -> Optional[str]:
@@ -13,14 +14,21 @@ def complete(system_prompt: str, user_prompt: str, *, max_tokens: int, json_outp
     if not api_key:
         return None
 
+    model = os.getenv("OPENAI_MODEL") or DEFAULT_MODEL
+    effort = os.getenv("OPENAI_REASONING_EFFORT", "").strip().lower()
+    # The default model uses no reasoning by default. Other models can spend
+    # completion tokens reasoning even when the caller leaves effort unset.
+    allow_reasoning = effort != "none" and (bool(effort) or model != DEFAULT_MODEL)
     payload = {
-        "model": os.getenv("OPENAI_MODEL") or "gpt-5.4-mini",
+        "model": model,
         "messages": [
             {"role": "developer", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "max_completion_tokens": max_tokens,
+        "max_completion_tokens": max_tokens + (8192 if allow_reasoning else 0),
     }
+    if effort:
+        payload["reasoning_effort"] = effort
     if json_output:
         payload["response_format"] = {"type": "json_object"}
 
@@ -29,12 +37,14 @@ def complete(system_prompt: str, user_prompt: str, *, max_tokens: int, json_outp
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
-            timeout=15,
+            timeout=(15, 180 if allow_reasoning else 15),
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
     except requests.HTTPError as exc:
-        logger.warning("OpenAI request failed (HTTP %s). Check your API key, model and API quota.", exc.response.status_code)
+        logger.warning(
+            "OpenAI request failed (HTTP %s). Check your key, model, reasoning effort and quota.", exc.response.status_code
+        )
         return None
     except requests.RequestException as exc:
         logger.warning("OpenAI request failed (%s).", type(exc).__name__)

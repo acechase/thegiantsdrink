@@ -37,6 +37,9 @@ Copy `.env.example` to `.env` next to `main.py`, then fill in `OPENAI_API_KEY` w
 |---|---|
 | `OPENAI_API_KEY` | Required to play. Authenticates requests to the OpenAI API. |
 | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. Choose a Chat Completions model that supports JSON output for command parsing. |
+| `OPENAI_REASONING_EFFORT` | Optional. Sets the reasoning effort for command parsing and room narration. Omit it to use the model's default. |
+
+For example, set `OPENAI_MODEL=gpt-6-luna` and `OPENAI_REASONING_EFFORT=low` in your `.env`, then restart the game. Luna accepts `none`, `low`, `medium` (default), `high`, `xhigh`, and `max`. [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna)
 
 Each new command can make one API request to parse your input. Actions such as moving can make a second request to narrate the room. The game caches successful results during play. [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 
