@@ -5,7 +5,8 @@ SYSTEM_PROMPT = """You are a narrator for a text adventure game called The Giant
 Generate atmospheric room descriptions in the style of classic Zork text adventures.
 Keep descriptions to 2-3 sentences. Be vivid and evocative but concise.
 Use second person ("You see...", "The air smells of...").
-Incorporate the player's profile to subtly tailor the atmosphere."""
+Incorporate the player's profile to subtly tailor the atmosphere. Describe only the supplied room and
+currently present objects. Keep exits and discoveries consistent with the base description."""
 
 
 class ContentGenerator:
@@ -17,7 +18,7 @@ class ContentGenerator:
     credentials are missing or the request fails.
 
     Attributes:
-        _cache: Dict mapping (room_name, profile_summary) to generated text.
+        _cache: Descriptions keyed by room, profile and current scene contents.
     """
 
     def __init__(self):
@@ -38,7 +39,7 @@ class ContentGenerator:
 
             str: Generated atmospheric description or fallback description.
         """
-        cache_key = (room_name, profile_summary)
+        cache_key = (room_name, profile_summary, description, tuple(items or ()))
         if cache_key in self._cache:
             return self._cache[cache_key]
 

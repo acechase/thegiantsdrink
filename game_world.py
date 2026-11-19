@@ -1,4 +1,40 @@
 # game_world.py
+from dataclasses import dataclass
+
+
+def noun(text):
+    """Normalize an object reference while retaining meaningful modifiers."""
+    words = text.casefold().strip(" .!?").split()
+    if words and words[0] in ("a", "an", "the", "my"):
+        words = words[1:]
+    return " ".join(words)
+
+
+def find_object(reference, objects):
+    """Resolve a name, alias or unambiguous sequence of whole words."""
+    name = noun(reference)
+    if not name:
+        return None
+    partial = []
+    for obj in objects:
+        names = (obj.name, *obj.aliases)
+        if name in names:
+            return obj
+        if any(f" {name} " in f" {candidate} " for candidate in names):
+            partial.append(obj)
+    return partial[0] if len(partial) == 1 else None
+
+
+@dataclass(frozen=True)
+class HiddenPassage:
+    """An exit a player can discover by using a carried tool on a landmark."""
+
+    tool: str
+    landmark: str
+    direction: str
+    destination: str
+    reveal: str
+    visible: str
 
 
 class Room:
@@ -11,7 +47,7 @@ class Room:
         exits: Dict mapping direction strings to destination room names.
     """
 
-    def __init__(self, name, description, items=None, exits=None):
+    def __init__(self, name, description, items=None, exits=None, *, scenery=(), passage=None):
         """Initialize a Room with a name, description, items, and exit directions.
 
         name (str): Unique name of the room.
@@ -24,6 +60,20 @@ class Room:
         self.description = description
         self.items = items if items else []
         self.exits = exits if exits else {}
+        self.scenery = scenery
+        self.passage = passage
+
+    def prose(self):
+        """Describe the room as it currently stands."""
+        parts = [self.description, *(item.room_text for item in self.items if item.room_text)]
+        if self.passage_open:
+            parts.append(self.passage.visible)
+        return " ".join(parts)
+
+    @property
+    def passage_open(self):
+        """Whether the hidden route is already part of this room's exits."""
+        return self.passage is not None and self.exits.get(self.passage.direction) == self.passage.destination
 
 
 class Item:
@@ -35,7 +85,7 @@ class Item:
         usable: Whether the item can be activated with the 'use' command.
     """
 
-    def __init__(self, name, description, usable=False):
+    def __init__(self, name, description, usable=False, *, aliases=(), room_text=""):
         """Initialize an Item with a name, description, and usability flag.
 
         name (str): Display name of the item.
@@ -46,30 +96,87 @@ class Item:
         self.name = name
         self.description = description
         self.usable = usable
+        self.aliases = aliases
+        self.room_text = room_text
 
 
 # ── Items ────────────────────────────────────────────────────────────
 
-rusty_sword = Item("rusty sword", "An old sword, but it might still be useful.")
-magic_potion = Item("magic potion", "A potion that might give you strength.", usable=True)
-ancient_book = Item("ancient book", "A book that might contain useful information.", usable=True)
-key = Item("key", "A key that might unlock something important.", usable=True)
-silver_shield = Item("silver shield", "A battered shield that still gleams faintly.", usable=True)
+rusty_sword = Item(
+    "rusty sword", "Rust freckles the blade. Its heavy pommel still rings clear against stone.", aliases=("blade",)
+)
+candle = Item(
+    "candle",
+    "A thumb of warm beeswax cups a wavering blue flame. A curl of wax has hardened along one side.",
+    usable=True,
+    aliases=("guttering candle", "wax candle"),
+    room_text="A single candle gutters on the shelf, casting restless shadows across the walls.",
+)
+magic_potion = Item(
+    "magic potion",
+    "Blue light pulses in the glass. The potion might give you strength.",
+    usable=True,
+    room_text="On the pedestal, a magic potion pulses with an inner blue light.",
+)
+ancient_book = Item(
+    "ancient book",
+    "The cover reads 'The Legend of the Giant'. A ribbon marks a well-thumbed page.",
+    usable=True,
+    room_text="One volume — 'The Legend of the Giant' — lies open on the reading stand.",
+)
+key = Item(
+    "key",
+    "A heavy iron key. A clenched fist is stamped into its bow.",
+    usable=True,
+    room_text="A heavy key hangs on a chain around the giant's neck.",
+)
+silver_shield = Item(
+    "silver shield",
+    "A battered shield that still gleams faintly.",
+    usable=True,
+    room_text="A single human-sized silver shield hangs on a hook.",
+)
 torch = Item("torch", "A lit torch that pushes back the darkness.", usable=True)
-crystal_vial = Item("crystal vial", "A vial of luminous liquid — the Giant's own draft, distilled.", usable=True)
-iron_helm = Item("iron helm", "A heavy helm that makes you feel invincible.", usable=True)
+crystal_vial = Item(
+    "crystal vial",
+    "A vial of luminous liquid — the Giant's own draft, distilled.",
+    usable=True,
+    room_text="A crystal vial filled with luminous liquid rests on the desk.",
+)
+iron_helm = Item(
+    "iron helm",
+    "A heavy helm that makes you feel invincible.",
+    usable=True,
+    room_text="An iron helm rests in the corner, forgotten by some earlier prisoner.",
+)
 
 # ── Rooms (15 total) ────────────────────────────────────────────────
 
 starting_room = Room(
     name="Starting Room",
     description=(
-        "A small, dimly lit chamber carved from grey stone. A single candle "
-        "gutters on a shelf, casting restless shadows across the walls. The air "
+        "A small chamber carved from grey stone, with a shelf set into one wall. The air "
         "smells of damp earth and old iron. A wooden door to the north stands ajar."
     ),
-    items=[rusty_sword],
+    items=[rusty_sword, candle],
     exits={"north": "Corridor"},
+    scenery=(
+        Item(
+            "stone wall",
+            "Most stones sit flush. One below the shelf has a crescent of dust around its edge.",
+            aliases=("walls", "stone walls", "stones", "loose stone", "loose stones", "stonework"),
+        ),
+        Item("shelf", "A shallow stone ledge juts out of the wall. Old wax fills a crack along its lip."),
+        Item("wooden door", "The door hangs ajar. Beyond it you can see the corridor to the north."),
+    ),
+    passage=HiddenPassage(
+        tool="rusty sword",
+        landmark="stone wall",
+        direction="down",
+        destination="Dungeon",
+        reveal="One stone answers the sword with a hollow knock. It tips inward, revealing steps leading down.",
+        visible="An opening below the shelf reveals stone steps leading down.",
+    ),
 )
 
 corridor = Room(
@@ -86,6 +193,9 @@ corridor = Room(
         "west": "Library",
         "north": "Great Staircase",
     },
+    scenery=(
+        Item("tapestries", "Woven giants bend over a table. There is a tiny empty chair at its head.", aliases=("tapestry",)),
+    ),
 )
 
 treasure_room = Room(
@@ -93,10 +203,11 @@ treasure_room = Room(
     description=(
         "Gold coins and faceted jewels spill across the floor in careless heaps. "
         "A marble pedestal rises from the centre of the glittering mess, and atop it "
-        "a magic potion pulses with an inner blue light. The air hums with latent power."
+        "the dust bears a small round impression. The air hums with latent power."
     ),
     items=[magic_potion],
     exits={"west": "Corridor"},
+    scenery=(Item("marble pedestal", "The top is polished smooth around a ring of blue glass dust."),),
 )
 
 library = Room(
@@ -104,11 +215,11 @@ library = Room(
     description=(
         "Shelves of ancient books climb to a ceiling you cannot see, their spines "
         "cracked and faded. Dust motes drift in a shaft of pale light from an unseen "
-        "window. One volume — 'The Legend of the Giant' — lies open on a reading stand, "
-        "as though someone left mid-sentence."
+        "window onto a reading stand."
     ),
     items=[ancient_book],
     exits={"east": "Corridor", "north": "Archives"},
+    scenery=(Item("reading stand", "A brass lip keeps the pages of an open book from slipping."),),
 )
 
 archives = Room(
@@ -119,6 +230,7 @@ archives = Room(
         "passage behind the Library shelves — if one knew where to look."
     ),
     exits={"south": "Library", "east": "Servants Passage"},
+    scenery=(Item("faded map", "A pencilled line runs west from the Library shelves.", aliases=("wall map",)),),
 )
 
 servants_passage = Room(
@@ -129,6 +241,7 @@ servants_passage = Room(
         "archives to the great staircase without passing through the main halls."
     ),
     exits={"west": "Archives", "east": "Great Staircase"},
+    scenery=(Item("stones", "The middle of each flagstone is worn lower than its edges.", aliases=("flagstones",)),),
 )
 
 great_staircase = Room(
@@ -143,6 +256,7 @@ great_staircase = Room(
         "west": "Servants Passage",
         "up": "Upper Landing",
     },
+    scenery=(Item("banisters", "Carved stone serpents coil around vines.", aliases=("banister", "carvings")),),
 )
 
 upper_landing = Room(
@@ -158,17 +272,20 @@ upper_landing = Room(
         "east": "Armoury",
         "west": "Observatory",
     },
+    scenery=(Item("landing", "From here you can look down into the curl of the staircase."),),
 )
 
 armoury = Room(
     name="Armoury",
     description=(
         "Racks of oversized weapons line the walls — halberds, maces, and swords built "
-        "for hands three times your size. A single human-sized silver shield hangs on a "
-        "hook, almost lost among the giant's arsenal. Cobwebs bridge the weapon racks."
+        "for hands three times your size. Cobwebs bridge the weapon racks."
     ),
     items=[silver_shield],
     exits={"west": "Upper Landing"},
+    scenery=(
+        Item("weapon racks", "The hooks are set so high that most of the weapons are beyond your reach.", aliases=("racks",)),
+    ),
 )
 
 observatory = Room(
@@ -180,18 +297,15 @@ observatory = Room(
     ),
     items=[torch],
     exits={"east": "Upper Landing", "north": "Hidden Study"},
+    scenery=(Item("brass telescope", "A single bright star swims in a blur behind the cloudy lens."),),
 )
 
 hidden_study = Room(
     name="Hidden Study",
-    description=(
-        "Behind a revolving bookcase you find a small, secret study. A desk holds a "
-        "crystal vial filled with luminous liquid — the Giant's own draft, distilled "
-        "to its purest form. This is the weapon of legend, the thing the giant fears "
-        "most: his own strength turned against him."
-    ),
+    description=("Behind a revolving bookcase you find a small, secret study. A desk stands beneath a low arch."),
     items=[crystal_vial],
     exits={"south": "Observatory"},
+    scenery=(Item("desk", "A pale stain in the shape of a vial marks the writing surface."),),
 )
 
 giants_hall = Room(
@@ -199,11 +313,15 @@ giants_hall = Room(
     description=(
         "A cavernous hall stretches before you, its ceiling lost in darkness high above. "
         "An enormous throne of twisted iron dominates the far end. The giant sits upon it, "
-        "chest rising and falling in uneasy sleep, a heavy key on a chain around his neck. "
+        "chest rising and falling in uneasy sleep. "
         "The floor trembles faintly with each of his breaths."
     ),
     items=[key],
     exits={"south": "Upper Landing", "east": "Throne Antechamber"},
+    scenery=(
+        Item("giant", "He sleeps fitfully on the twisted iron throne."),
+        Item("iron throne", "Its feet have sunk into the floor."),
+    ),
 )
 
 throne_antechamber = Room(
@@ -211,9 +329,10 @@ throne_antechamber = Room(
     description=(
         "A side chamber adjoining the Giant's Hall. Tattered banners hang from the rafters "
         "bearing the giant's crest — a fist clutching a goblet. A heavy iron door to the "
-        "north is locked, but a keyhole glints in the torchlight."
+        "north has a keyhole that glints in the torchlight."
     ),
     exits={"west": "Giant's Hall", "north": "Victory Chamber"},
+    scenery=(Item("iron door", "The lock bears the same clenched fist as the banners.", aliases=("lock", "keyhole")),),
 )
 
 victory_chamber = Room(
@@ -224,17 +343,18 @@ victory_chamber = Room(
         "itself. Whoever claims it commands the castle."
     ),
     exits={"south": "Throne Antechamber"},
+    scenery=(Item("stone altar", "The altar is carved with a pair of open hands."),),
 )
 
 dungeon = Room(
     name="Dungeon",
     description=(
         "Damp stone walls press close in this underground cell. Chains hang from iron "
-        "rings, and the only light comes from a grate far above. An iron helm rests "
-        "in the corner, forgotten by some earlier prisoner."
+        "rings, and the only daylight comes from a grate far above."
     ),
     items=[iron_helm],
     exits={"up": "Starting Room"},
+    scenery=(Item("iron chains", "The last link of each chain has been polished bright by many hands.", aliases=("chain",)),),
 )
 
 # ── World Map ────────────────────────────────────────────────────────

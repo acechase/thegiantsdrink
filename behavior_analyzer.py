@@ -40,7 +40,7 @@ class BehaviorAnalyzer:
         if self.first_action is None:
             self.first_action = action
 
-        if action == "move":
+        if action in ("move", "discover"):
             self.profile["exploration"] += 1
         elif action == "attack":
             self.profile["aggression"] += 1
@@ -66,7 +66,7 @@ class BehaviorAnalyzer:
         total = len(self.action_history)
         if total == 0:
             return {"explore": 0.0, "attack": 0.0, "use": 0.0}
-        explore_count = self.action_history.count("move")
+        explore_count = self.action_history.count("move") + self.action_history.count("discover")
         attack_count = self.action_history.count("attack")
         use_count = self.action_history.count("use")
         return {

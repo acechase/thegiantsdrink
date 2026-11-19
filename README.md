@@ -43,7 +43,7 @@ Copy `.env.example` to `.env` next to `main.py`, then fill in `OPENAI_API_KEY` w
 
 For example, set `OPENAI_MODEL=gpt-6-luna` and `OPENAI_REASONING_EFFORT=low` in your `.env`, then restart the game. Luna accepts `none`, `low`, `medium` (default), `high`, `xhigh`, and `max`. [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna)
 
-Each new command can make one API request to parse your input. Actions such as moving can make a second request to narrate the room. The game caches successful results during play. [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+Common commands such as `examine the sword` and `take the candle` resolve immediately. For more elaborate phrasing, the game sends OpenAI your command, the current scene, and your inventory. Entering a room can trigger a separate narration request. [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 
 ## How to Run
 
@@ -56,9 +56,11 @@ python main.py
 | Command | Description |
 |---|---|
 | `look` | Look around the current room |
+| `examine <object>` or `look at <object>` | Inspect a carried item, a visible item, or a nearby landmark |
 | `go <direction>` | Move north, south, east, west, up, or down |
 | `take <item>` | Pick up an item |
 | `use <item>` | Use an item from your inventory |
+| `use <item> on <object>` | Try a carried tool on something here. You can also describe the attempt in your own words. |
 | `attack <target>` | Attack something |
 | `inventory` | Check your inventory |
 | `help` | Show available commands |

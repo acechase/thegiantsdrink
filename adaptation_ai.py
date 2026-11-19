@@ -75,6 +75,6 @@ class AdaptationAI:
                 "Shelves of ancient books climb to a ceiling you cannot see. Your keen "
                 "explorer's eye spots something others would miss — one bookcase sits "
                 "slightly proud of the wall. Behind it, a hidden passage leads west "
-                "into shadow. The ancient book still lies open on its stand."
+                "into shadow."
             )
             self._hidden_passage_revealed = True

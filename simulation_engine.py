@@ -1,4 +1,5 @@
 # simulation_engine.py
+from game_world import find_object
 
 
 class GameState:
@@ -52,12 +53,52 @@ class GameState:
 
         str: Success message or error message if item not found.
         """
-        for item in world_map[self.current_room].items:
-            if item_name.lower() in item.name.lower():
-                self.inventory.append(item)
-                world_map[self.current_room].items.remove(item)
-                return f"You take the {item.name}."
+        room = world_map[self.current_room]
+        item = find_object(item_name, room.items)
+        if item:
+            self.inventory.append(item)
+            room.items.remove(item)
+            return f"You take the {item.name}."
+        held = find_object(item_name, self.inventory)
+        if held:
+            return f"You're already carrying the {held.name}."
+        fixture = find_object(item_name, room.scenery)
+        if fixture:
+            return f"You can't carry the {fixture.name}."
         return "There is no such item here."
+
+    def examine(self, reference, world_map):
+        """Inspect a carried item or an object at the player's location."""
+        room = world_map[self.current_room]
+        obj = find_object(reference, [*self.inventory, *room.items, *room.scenery])
+        if not obj:
+            return f"You see no {reference} here or in your inventory."
+        passage = room.passage
+        if room.passage_open and obj.name == passage.landmark:
+            return passage.visible
+        return obj.description
+
+    def use_on(self, tool_name, target_name, world_map, difficulty=1.0):
+        """Resolve an attempted tool interaction against the current world."""
+        room = world_map[self.current_room]
+        tool = find_object(tool_name, self.inventory)
+        if not tool:
+            return f"You need to be carrying the {tool_name} first."
+        target = find_object(target_name, [*room.scenery, *room.items, *self.inventory])
+        if not target:
+            return f"You see no {target_name} here or in your inventory."
+
+        passage = room.passage
+        if passage and (tool.name, target.name) == (passage.tool, passage.landmark):
+            if room.passage_open:
+                return passage.visible
+            room.exits[passage.direction] = passage.destination
+            return passage.reveal
+        if target.name == "giant" and tool.name == "rusty sword":
+            return self.attack("giant", difficulty)
+        if (tool.name, target.name) in {("key", "iron door"), ("crystal vial", "giant")}:
+            return self.use_item(tool.name, difficulty)
+        return f"You try the {tool.name} on the {target.name}. Nothing happens."
 
     def use_item(self, item_name, difficulty=1.0):
         """Use an item from the player's inventory, triggering its effect.
@@ -67,41 +108,47 @@ class GameState:
 
         str: Description of the item's effect or error message.
         """
-        for item in self.inventory:
-            if item_name.lower() in item.name.lower() and item.usable:
-                if "potion" in item.name.lower():
+        item = find_object(item_name, self.inventory)
+        if not item:
+            return "You can't use that item or it's not in your inventory."
+        if item.name == "rusty sword":
+            return "You're holding the rusty sword. What would you like to use it on?"
+        if item.name == "candle":
+            return "You lift the candle. Its flame throws your shadow across the room."
+        if item.usable:
+            if "potion" in item.name.lower():
+                self.inventory.remove(item)
+                self.potion_active = True
+                return "You drink the magic potion and feel a surge of strength!"
+            elif "book" in item.name.lower():
+                self.book_knowledge = True
+                return (
+                    "You read the ancient book and learn that the giant fears "
+                    "his own drink turned against him. A crystal vial of his "
+                    "draft may be hidden somewhere in the castle..."
+                )
+            elif "key" in item.name.lower():
+                if self.current_room in ("Throne Antechamber", "Giant's Hall"):
+                    self.door_unlocked = True
+                    return "You use the key — the iron door clicks open!"
+                return "There is nothing to unlock here."
+            elif "crystal vial" in item.name.lower():
+                if self.current_room == "Giant's Hall":
                     self.inventory.remove(item)
-                    self.potion_active = True
-                    return "You drink the magic potion and feel a surge of strength!"
-                elif "book" in item.name.lower():
-                    self.book_knowledge = True
+                    self.giant_defeated = True
                     return (
-                        "You read the ancient book and learn that the giant fears "
-                        "his own drink turned against him. A crystal vial of his "
-                        "draft may be hidden somewhere in the castle..."
+                        "You hurl the crystal vial at the giant. The luminous "
+                        "liquid splashes across him and he shrieks — his own "
+                        "strength turned against him! The giant crumbles to dust."
                     )
-                elif "key" in item.name.lower():
-                    if self.current_room in ("Throne Antechamber", "Giant's Hall"):
-                        self.door_unlocked = True
-                        return "You use the key — the iron door clicks open!"
-                    return "There is nothing to unlock here."
-                elif "crystal vial" in item.name.lower():
-                    if self.current_room == "Giant's Hall":
-                        self.inventory.remove(item)
-                        self.giant_defeated = True
-                        return (
-                            "You hurl the crystal vial at the giant. The luminous "
-                            "liquid splashes across him and he shrieks — his own "
-                            "strength turned against him! The giant crumbles to dust."
-                        )
-                    return "There is no one here to use this on."
-                elif "shield" in item.name.lower():
-                    return "You raise the silver shield. It might protect you in battle."
-                elif "torch" in item.name.lower():
-                    return "The torch flares brightly, pushing shadows to the walls."
-                elif "helm" in item.name.lower():
-                    return "You put on the iron helm. You feel tougher."
-        return "You can't use that item or it's not in your inventory."
+                return "There is no one here to use this on."
+            elif "shield" in item.name.lower():
+                return "You raise the silver shield. It might protect you in battle."
+            elif "torch" in item.name.lower():
+                return "The torch flares brightly, pushing shadows to the walls."
+            elif "helm" in item.name.lower():
+                return "You put on the iron helm. You feel tougher."
+        return f"What would you like to use the {item.name} on?"
 
     def attack(self, target, difficulty=1.0):
         """Attack a target using equipped weapons, potentially defeating the giant.
@@ -157,7 +204,7 @@ class GameState:
 
         return "There is nothing to attack here."
 
-    def get_current_description(self, world_map):
+    def get_current_description(self, world_map, *, description=None):
         """Get a full description of the current room including items and exits.
 
         world_map (dict): Mapping of room names to Room objects.
@@ -165,7 +212,7 @@ class GameState:
         str: Formatted room description with items visible and available exits.
         """
         room = world_map[self.current_room]
-        description = room.description
+        description = description or room.prose()
         if room.items:
             description += " You see: " + ", ".join([item.name for item in room.items])
         exits = ", ".join(room.exits.keys())

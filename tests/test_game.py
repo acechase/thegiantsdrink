@@ -3,6 +3,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from unittest.mock import patch
 
 import pytest
@@ -79,7 +80,7 @@ class TestInventory:
 
     def test_item_removed_from_room_after_take(self, game, wmap):
         game.take_item("rusty sword", wmap)
-        assert len(wmap["Starting Room"].items) == 0
+        assert [item.name for item in wmap["Starting Room"].items] == ["candle"]
 
     def test_take_item_in_treasure_room(self, game, wmap):
         game.current_room = "Treasure Room"
@@ -92,6 +93,17 @@ class TestInventory:
 
 
 class TestItemUse:
+    def test_probe_requires_a_carried_tool_and_local_target(self, game, wmap):
+        start = wmap["Starting Room"]
+        assert "carrying" in game.use_on("sword", "walls", wmap)
+        assert "down" not in start.exits
+        game.take_item("sword", wmap)
+        assert "no telescope" in game.use_on("sword", "telescope", wmap)
+        assert "Nothing happens" in game.use_on("sword", "shelf", wmap)
+        game.move("north", wmap)
+        assert "no walls" in game.use_on("sword", "walls", wmap)
+        assert "down" not in start.exits
+
     def test_use_potion(self, game, wmap):
         game.current_room = "Treasure Room"
         game.take_item("magic potion", wmap)
@@ -188,6 +200,12 @@ class TestCombat:
 
 
 class TestBehaviorAnalyzer:
+    def test_discovery_counts_as_exploration(self):
+        ba = BehaviorAnalyzer()
+        ba.update_profile("discover")
+        assert ba.profile["exploration"] == 1
+        assert ba.get_action_ratios()["explore"] == 1
+
     def test_update_profile_move(self):
         ba = BehaviorAnalyzer()
         ba.update_profile("move")
@@ -331,9 +349,20 @@ def completion(text):
 
 
 class TestCommandParser:
+    def test_model_sees_current_scene_and_rechecks_after_pickup(self, openai_api, game, wmap):
+        room = wmap["Starting Room"]
+        openai_api.post(OPENAI_URL, json=completion('{"action":"examine","target":"shelf"}'))
+        openai_api.post(OPENAI_URL, json=completion('{"action":"examine","target":"candle"}'))
+        command = "what am I looking at?"
+        assert parse_command(command, room, game.inventory) == ("examine", "shelf")
+        game.take_item("candle", wmap)
+        assert parse_command(command, room, game.inventory) == ("examine", "candle")
+        instructions = json.loads(openai_api.calls[1].request.body)["messages"][0]["content"]
+        assert '"carrying": ["candle"]' in instructions and '"items": ["rusty sword"]' in instructions
+
     def test_parse_command_valid(self, openai_api):
         openai_api.post(OPENAI_URL, json=completion('{"action": "move", "target": "north"}'))
-        assert parse_command("go north") == ("move", "north")
+        assert parse_command("head towards the north") == ("move", "north")
 
         request = openai_api.calls[0].request
         assert request.headers["Authorization"] == "Bearer test-key"
@@ -342,7 +371,7 @@ class TestCommandParser:
         assert "reasoning_effort" not in payload
         assert payload["max_completion_tokens"] == 100
         assert payload["messages"][0]["role"] == "developer"
-        assert payload["messages"][1] == {"role": "user", "content": "go north"}
+        assert payload["messages"][1] == {"role": "user", "content": "head towards the north"}
         assert payload["response_format"] == {"type": "json_object"}
 
     def test_cache_hit(self, openai_api):
@@ -354,16 +383,28 @@ class TestCommandParser:
     def test_api_error_can_be_retried(self, openai_api):
         openai_api.post(OPENAI_URL, status=429, json={"error": {"message": "Rate limited"}})
         openai_api.post(OPENAI_URL, json=completion('{"action": "move", "target": "north"}'))
-        assert parse_command("go north") == (None, None)
-        assert parse_command("go north") == ("move", "north")
+        assert parse_command("head towards the north") == (None, None)
+        assert parse_command("head towards the north") == ("move", "north")
 
-    @pytest.mark.parametrize("text", ["not json", '{"action": [], "target": "giant"}', None])
+    @pytest.mark.parametrize(
+        "text", ["not json", '{"action": [], "target": "giant"}', '{"action":"use_on","target":"wall"}', None]
+    )
     def test_invalid_output(self, openai_api, text):
         openai_api.post(OPENAI_URL, json=completion(text))
         assert parse_command("gibberish xyz") == (None, None)
 
 
 class TestContentGenerator:
+    def test_scene_change_invalidates_cached_narration(self, openai_api, game, wmap):
+        cg = ContentGenerator()
+        room = wmap["Starting Room"]
+        openai_api.post(OPENAI_URL, json=completion("Wax drips from a lit candle."))
+        openai_api.post(OPENAI_URL, json=completion("The bare shelf casts a long shadow."))
+        assert "candle" in cg.generate_description(room.name, {}, room.prose(), ["rusty sword", "candle"])
+        game.take_item("candle", wmap)
+        assert "bare shelf" in cg.generate_description(room.name, {}, room.prose(), ["rusty sword"])
+        assert len(openai_api.calls) == 2
+
     def test_generate_description_success(self, openai_api, monkeypatch):
         monkeypatch.setenv("OPENAI_MODEL", "custom-model")
         openai_api.post(OPENAI_URL, json=completion("A dark and eerie room."))
@@ -372,7 +413,7 @@ class TestContentGenerator:
             "Starting Room", {}, description="static desc", items=["rusty sword"], profile_summary="explorer"
         )
         assert result == "A dark and eerie room."
-        assert cg.generate_description("Starting Room", {}, profile_summary="explorer") == result
+        assert cg.generate_description("Starting Room", {}, "static desc", ["rusty sword"], "explorer") == result
         assert len(openai_api.calls) == 1
         payload = json.loads(openai_api.calls[0].request.body)
         assert payload["model"] == "custom-model"
@@ -393,7 +434,7 @@ def test_missing_api_key(openai_api, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY")
     with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
         main.main()
-    assert parse_command("go north") == (None, None)
+    assert parse_command("head towards the north") == (None, None)
     assert ContentGenerator().generate_description("Library", {}) == "You are in the Library."
     assert not openai_api.calls
 
@@ -405,7 +446,7 @@ def test_play_with_dotenv_settings(openai_api, monkeypatch, tmp_path, effort):
         f"OPENAI_API_KEY=dotenv-test-key\nOPENAI_MODEL=gpt-6-luna\nOPENAI_REASONING_EFFORT={effort}\n"
     )
     with patch.dict("os.environ"):
-        output = _run_game(openai_api, ["go north", "quit"], [("move", "north"), ("quit", "game")])
+        output = _run_game(openai_api, ["head north, please", "time to leave"], [("move", "north"), ("quit", "game")])
     assert "Thanks for playing" in output
     assert len(openai_api.calls) == 3  # Move, narrate the room, quit.
     for call in openai_api.calls:
@@ -422,6 +463,22 @@ def test_play_with_dotenv_settings(openai_api, monkeypatch, tmp_path, effort):
 # ── End-to-End Game Loop ──────────────────────────────────────────
 
 
+def test_queued_input_survives_interrupted_narration(monkeypatch):
+    import main
+
+    termios = pytest.importorskip("termios")
+    master, slave = os.openpty()
+    with os.fdopen(master, "wb", buffering=0) as keyboard, os.fdopen(slave, "r") as terminal:
+        monkeypatch.setattr(main.sys, "stdin", terminal)
+        original = termios.tcgetattr(slave)
+        with pytest.raises(KeyboardInterrupt), main._quiet_typeahead():
+            assert not termios.tcgetattr(slave)[3] & termios.ECHO
+            keyboard.write(b"inventory\n")
+            raise KeyboardInterrupt
+        assert termios.tcgetattr(slave) == original
+        assert terminal.readline() == "inventory\n"
+
+
 def _run_game(openai_api, inputs, commands):
     """Run the game loop with scripted OpenAI replies at the HTTP boundary."""
     import main
@@ -432,7 +489,10 @@ def _run_game(openai_api, inputs, commands):
         payload = json.loads(request.body)
         if "response_format" in payload:
             reply = replies[payload["messages"][1]["content"]]
-            text = json.dumps({"action": reply[0], "target": reply[1]}) if reply else "???"
+            if isinstance(reply, dict):
+                text = json.dumps(reply)
+            else:
+                text = json.dumps({"action": reply[0], "target": reply[1]}) if reply else "???"
         else:
             text = "You stand in a room."
         return 200, {}, json.dumps(completion(text))
@@ -449,6 +509,38 @@ def _run_game(openai_api, inputs, commands):
 
 
 class TestEndToEnd:
+    def test_opening_room_transcript(self, openai_api):
+        probe = "use the sword to strike the walls of room to see if any stones are loose"
+        inputs = [
+            "pick up the sword",
+            "examine the sword",
+            "examine the sword",
+            "examine the candle",
+            probe,
+            "take the guttering candle",
+            "take the candle",
+            "look",
+            "inventory",
+            "go down",
+            "go up",
+            "examine the wall",
+            "use sword on wall",
+            "quit",
+        ]
+        replies = [None] * len(inputs)
+        replies[4] = {"action": "use_on", "tool": "rusty sword", "target": "stone wall"}
+        output = _run_game(openai_api, inputs, replies)
+        turns = output.split("Exits: north\n", 1)[1]
+        assert turns.count("Rust freckles the blade") == 2
+        assert "warm beeswax" in turns
+        assert turns.count("hollow knock") == 1
+        assert "You take the candle." in turns and "already carrying the candle" in turns
+        assert "Inventory: rusty sword, candle" in turns
+        assert "A single candle gutters" not in turns
+        assert "You move to the Dungeon." in turns and "Exits: north, down" in turns
+        assert turns.count("An opening below the shelf") == 3  # Look, inspect, then repeat the interaction.
+        assert len(openai_api.calls) == 3  # Interpret the compound action and narrate two room changes.
+
     def test_aggressor_path(self, openai_api):
         """Take sword → use potion → navigate to Giant's Hall → attack giant (difficulty 1.5)."""
         inputs = [
@@ -577,7 +669,12 @@ class TestEndToEnd:
 
     def test_quit(self, openai_api):
         """Quit command exits cleanly."""
-        output = _run_game(openai_api, ["quit"], [("quit", "game")])
+        with patch("builtins.input", return_value="quit"), contextlib.redirect_stdout(io.StringIO()) as buf:
+            import main
+
+            main.main()
+        output = buf.getvalue()
+        assert not openai_api.calls
         assert "thanks for playing" in output.lower()
 
     def test_invalid_command(self, openai_api):
