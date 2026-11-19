@@ -1,9 +1,13 @@
 # tests/test_game.py
+import contextlib
 import copy
+import io
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+import requests
+import responses
 
 from adaptation_ai import AdaptationAI
 from behavior_analyzer import BehaviorAnalyzer
@@ -306,167 +310,131 @@ class TestAdaptationAI:
 # ── Command Parser (mocked) ───────────────────────────────────────
 
 
-def _make_api_response(action, target):
-    """Build a mock requests.Response mimicking the Azure AI Foundry JSON."""
-    body = {"content": [{"text": json.dumps({"action": action, "target": target})}]}
-    resp = MagicMock()
-    resp.json.return_value = body
-    resp.raise_for_status = MagicMock()
-    return resp
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+
+
+@pytest.fixture
+def openai_api(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    command_cache.clear()
+    with responses.RequestsMock() as api:
+        yield api
+
+
+def completion(text):
+    return {"choices": [{"message": {"role": "assistant", "content": text}}]}
 
 
 class TestCommandParser:
-    def setup_method(self):
-        command_cache.clear()
+    def test_parse_command_valid(self, openai_api):
+        openai_api.post(OPENAI_URL, json=completion('{"action": "move", "target": "north"}'))
+        assert parse_command("go north") == ("move", "north")
 
-    @patch("command_parser.requests.post")
-    def test_parse_command_valid(self, mock_post):
-        mock_post.return_value = _make_api_response("move", "north")
-        action, target = parse_command("go north")
-        assert action == "move"
-        assert target == "north"
+        request = openai_api.calls[0].request
+        assert request.headers["Authorization"] == "Bearer test-key"
+        payload = json.loads(request.body)
+        assert payload["model"] == "gpt-5.4-mini"
+        assert payload["messages"][0]["role"] == "developer"
+        assert payload["messages"][1] == {"role": "user", "content": "go north"}
+        assert payload["response_format"] == {"type": "json_object"}
 
-    @patch("command_parser.requests.post")
-    def test_cache_hit(self, mock_post):
-        mock_post.return_value = _make_api_response("take", "rusty sword")
+    def test_cache_hit(self, openai_api):
+        openai_api.post(OPENAI_URL, json=completion('{"action": "take", "target": "rusty sword"}'))
         parse_command("take sword")
         parse_command("take sword")
-        assert mock_post.call_count == 1
+        assert len(openai_api.calls) == 1
 
-    @patch("command_parser.requests.post")
-    def test_api_error_key(self, mock_post):
-        resp = MagicMock()
-        resp.json.return_value = {"error": "rate limit"}
-        resp.raise_for_status = MagicMock()
-        mock_post.return_value = resp
-        action, target = parse_command("go north error")
-        assert action is None and target is None
+    def test_api_error_can_be_retried(self, openai_api):
+        openai_api.post(OPENAI_URL, status=429, json={"error": {"message": "Rate limited"}})
+        openai_api.post(OPENAI_URL, json=completion('{"action": "move", "target": "north"}'))
+        assert parse_command("go north") == (None, None)
+        assert parse_command("go north") == ("move", "north")
 
-    @patch("command_parser.requests.post")
-    def test_malformed_json(self, mock_post):
-        resp = MagicMock()
-        resp.json.return_value = {"content": [{"text": "not json at all"}]}
-        resp.raise_for_status = MagicMock()
-        mock_post.return_value = resp
-        action, target = parse_command("gibberish xyz")
-        assert action is None and target is None
-
-
-# ── Content Generator (mocked) ────────────────────────────────────
+    @pytest.mark.parametrize("text", ["not json", '{"action": [], "target": "giant"}', None])
+    def test_invalid_output(self, openai_api, text):
+        openai_api.post(OPENAI_URL, json=completion(text))
+        assert parse_command("gibberish xyz") == (None, None)
 
 
 class TestContentGenerator:
-    @patch("content_generator.requests.post")
-    def test_generate_description_success(self, mock_post):
-        resp = MagicMock()
-        resp.json.return_value = {"content": [{"text": "A dark and eerie room."}]}
-        resp.raise_for_status = MagicMock()
-        mock_post.return_value = resp
+    def test_generate_description_success(self, openai_api, monkeypatch):
+        monkeypatch.setenv("OPENAI_MODEL", "custom-model")
+        openai_api.post(OPENAI_URL, json=completion("A dark and eerie room."))
         cg = ContentGenerator()
         result = cg.generate_description(
-            "Starting Room",
-            {},
-            description="static desc",
-            items=["rusty sword"],
-            profile_summary="explorer",
+            "Starting Room", {}, description="static desc", items=["rusty sword"], profile_summary="explorer"
         )
         assert result == "A dark and eerie room."
+        assert cg.generate_description("Starting Room", {}, profile_summary="explorer") == result
+        assert len(openai_api.calls) == 1
+        payload = json.loads(openai_api.calls[0].request.body)
+        assert payload["model"] == "custom-model"
+        assert "response_format" not in payload
+        assert "rusty sword" in payload["messages"][1]["content"]
+        assert "explorer" in payload["messages"][1]["content"]
 
-    @patch("content_generator.requests.post")
-    def test_generate_description_fallback_on_error(self, mock_post):
-        import requests as req
-
-        mock_post.side_effect = req.RequestException("network error")
+    @pytest.mark.parametrize("reply", [{"status": 503}, {"body": requests.Timeout()}, {"json": {"choices": []}}])
+    def test_generate_description_fallback_on_error(self, openai_api, reply):
+        openai_api.post(OPENAI_URL, **reply)
         cg = ContentGenerator()
-        result = cg.generate_description(
-            "Starting Room",
-            {},
-            description="static desc",
-            items=[],
-            profile_summary="explorer",
-        )
-        assert result == "static desc"
+        assert cg.generate_description("Starting Room", {}, description="static desc") == "static desc"
+
+
+def test_missing_api_key(openai_api, monkeypatch, tmp_path):
+    import main
+
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.setattr(main, "__file__", str(tmp_path / "main.py"))
+    with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
+        main.main()
+    assert parse_command("go north") == (None, None)
+    assert ContentGenerator().generate_description("Library", {}) == "You are in the Library."
+    assert not openai_api.calls
+
+
+def test_play_with_dotenv_key(openai_api, monkeypatch, tmp_path):
+    import main
+
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.setattr(main, "__file__", str(tmp_path / "main.py"))
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=dotenv-test-key\n")
+    output = _run_game(openai_api, ["I would like to leave"], [("quit", "game")])
+    assert "Thanks for playing" in output
+    assert openai_api.calls[0].request.headers["Authorization"] == "Bearer dotenv-test-key"
 
 
 # ── End-to-End Game Loop ──────────────────────────────────────────
 
 
-def _llm_response(action, target):
-    """Return a mock response body for command_parser."""
-    return {"content": [{"text": json.dumps({"action": action, "target": target})}]}
+def _run_game(openai_api, inputs, commands):
+    """Run the game loop with scripted OpenAI replies at the HTTP boundary."""
+    import main
 
+    replies = dict(zip(inputs, commands))
 
-def _desc_response(text="You stand in a room."):
-    """Return a mock response body for content_generator."""
-    return {"content": [{"text": text}]}
-
-
-def _run_game(input_sequence, command_responses):
-    """Run main() with mocked input and a single requests.post mock.
-
-    Uses max_tokens in the payload to distinguish command_parser (100)
-    from content_generator (200) calls.  command_parser caches results
-    by raw input string, so *command_responses* should only contain
-    entries for the **first occurrence** of each unique input.
-    """
-    import contextlib
-    import importlib
-    import io
-
-    command_cache.clear()
-    cmd_iter = iter(command_responses)
-
-    def _post_dispatch(url, **kwargs):
-        payload = kwargs.get("json", {})
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        if payload.get("max_tokens") == 100:
-            src = next(cmd_iter)
-            resp.json.return_value = src.json.return_value
+    def respond(request):
+        payload = json.loads(request.body)
+        if "response_format" in payload:
+            reply = replies[payload["messages"][1]["content"]]
+            text = json.dumps({"action": reply[0], "target": reply[1]}) if reply else "???"
         else:
-            resp.json.return_value = _desc_response()
-        return resp
+            text = "You stand in a room."
+        return 200, {}, json.dumps(completion(text))
 
-    # Ensure main module is loaded so we can patch its world_map
-    import main as main_mod
-
-    importlib.reload(main_mod)
-
+    openai_api.add_callback(responses.POST, OPENAI_URL, callback=respond, content_type="application/json")
     buf = io.StringIO()
-    fresh_map = copy.deepcopy(world_map)
     with (
-        patch("builtins.input", side_effect=input_sequence),
-        patch("requests.post", side_effect=_post_dispatch),
-        patch.object(main_mod, "world_map", fresh_map),
+        patch("builtins.input", side_effect=inputs),
+        patch.object(main, "world_map", copy.deepcopy(world_map)),
         contextlib.redirect_stdout(buf),
     ):
-        main_mod.main()
-
+        main.main()
     return buf.getvalue()
 
 
-def _unique_responses(inputs, cmds):
-    """Build a response list containing only the first-seen input's response.
-
-    ``inputs`` is the list of raw player strings, ``cmds`` is a parallel
-    list of (action, target) tuples.  Returns MagicMock responses only
-    for the first occurrence of each unique input string (because
-    command_parser caches subsequent identical strings).
-    """
-    seen = set()
-    responses = []
-    for raw, (action, target) in zip(inputs, cmds):
-        if raw not in seen:
-            seen.add(raw)
-            r = MagicMock()
-            r.json.return_value = _llm_response(action, target)
-            r.raise_for_status = MagicMock()
-            responses.append(r)
-    return responses
-
-
 class TestEndToEnd:
-    def test_aggressor_path(self):
+    def test_aggressor_path(self, openai_api):
         """Take sword → use potion → navigate to Giant's Hall → attack giant (difficulty 1.5)."""
         inputs = [
             "take sword",
@@ -502,11 +470,10 @@ class TestEndToEnd:
             ("attack", "giant"),
             ("attack", "giant"),
         ]
-        responses = _unique_responses(inputs, cmds)
-        output = _run_game(inputs, responses)
+        output = _run_game(openai_api, inputs, cmds)
         assert "defeated" in output.lower() or "giant falls" in output.lower()
 
-    def test_strategist_path(self):
+    def test_strategist_path(self, openai_api):
         """Take sword → read book → use potion → attack giant."""
         inputs = [
             "take sword",
@@ -540,11 +507,10 @@ class TestEndToEnd:
             ("move", "north"),
             ("attack", "giant"),
         ]
-        responses = _unique_responses(inputs, cmds)
-        output = _run_game(inputs, responses)
+        output = _run_game(openai_api, inputs, cmds)
         assert "defeated" in output.lower() or "topples" in output.lower()
 
-    def test_explorer_path(self):
+    def test_explorer_path(self, openai_api):
         """Navigate to Hidden Study → take crystal vial → use crystal vial in Giant's Hall."""
         inputs = [
             "go north",
@@ -576,11 +542,10 @@ class TestEndToEnd:
             ("move", "north"),
             ("use", "crystal vial"),
         ]
-        responses = _unique_responses(inputs, cmds)
-        output = _run_game(inputs, responses)
+        output = _run_game(openai_api, inputs, cmds)
         assert "crumbles" in output.lower() or "defeated" in output.lower()
 
-    def test_attack_without_sword(self):
+    def test_attack_without_sword(self, openai_api):
         """Attack giant without sword → giant_defeated stays False."""
         inputs = ["go north", "head north", "go up", "walk north", "attack giant", "quit"]
         cmds = [
@@ -591,30 +556,17 @@ class TestEndToEnd:
             ("attack", "giant"),
             ("quit", "game"),
         ]
-        responses = _unique_responses(inputs, cmds)
-        output = _run_game(inputs, responses)
+        output = _run_game(openai_api, inputs, cmds)
         assert "fail" in output.lower() or "without a weapon" in output.lower()
         assert "congratulations" not in output.lower()
 
-    def test_quit(self):
+    def test_quit(self, openai_api):
         """Quit command exits cleanly."""
-        r = MagicMock()
-        r.json.return_value = _llm_response("quit", "game")
-        r.raise_for_status = MagicMock()
-        output = _run_game(["quit"], [r])
+        output = _run_game(openai_api, ["quit"], [("quit", "game")])
         assert "thanks for playing" in output.lower()
 
-    def test_invalid_command(self):
+    def test_invalid_command(self, openai_api):
         """Gibberish → fallback message, game continues."""
-        # First call: gibberish returns (None, None)
-        r1 = MagicMock()
-        r1.json.return_value = {"content": [{"text": "???"}]}
-        r1.raise_for_status = MagicMock()
-        # Second call: quit
-        r2 = MagicMock()
-        r2.json.return_value = _llm_response("quit", "game")
-        r2.raise_for_status = MagicMock()
-
-        output = _run_game(["xyzzy", "quit"], [r1, r2])
+        output = _run_game(openai_api, ["xyzzy", "quit"], [None, ("quit", "game")])
         assert "do not understand" in output.lower()
         assert "thanks for playing" in output.lower()

@@ -1,9 +1,9 @@
 # The Giant's Drink
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue)](https://www.python.org/)
-[![CI Pipeline](https://github.com/pjmorr-radpartners/thegiantsdrink/actions/workflows/ci.yml/badge.svg)](https://github.com/pjmorr-radpartners/thegiantsdrink/actions)
+[![CI Pipeline](https://github.com/acechase/thegiantsdrink/actions/workflows/ci.yml/badge.svg)](https://github.com/acechase/thegiantsdrink/actions/workflows/ci.yml)
 
-A text-based adventure game where you explore a castle, collect items, and face a giant. The game uses AI (via Azure AI Foundry) to parse natural language commands, generate atmospheric room descriptions, and adapt difficulty to your playstyle.
+A text-based adventure game where you explore a castle, collect items, and face a giant. OpenAI parses your commands and narrates rooms. The game tracks your actions and adapts its difficulty to your playstyle.
 
 ## Features
 
@@ -17,7 +17,7 @@ A text-based adventure game where you explore a castle, collect items, and face 
 
 ```bash
 # Clone the repository
-git clone https://github.com/pjmorr-radpartners/thegiantsdrink.git
+git clone https://github.com/acechase/thegiantsdrink.git
 cd thegiantsdrink
 
 # Create and activate a virtual environment
@@ -29,21 +29,16 @@ source .venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
 
-## Required Environment Variables
+## OpenAI setup
 
-Set these before running the game:
+Copy `.env.example` to `.env` next to `main.py`, then fill in `OPENAI_API_KEY` with your [OpenAI API key](https://platform.openai.com/api-keys). The game also reads these variables from your shell. Shell values take precedence.
 
 | Variable | Description |
 |---|---|
-| `AZURE_API_KEY` | Your Azure AI Foundry API key |
-| `AZURE_API_BASE` | Endpoint base URL (e.g. `https://xxx.services.ai.azure.com/...`) |
-| `AZURE_API_MODEL` | Model name to use for completions |
+| `OPENAI_API_KEY` | Required to play. Authenticates requests to the OpenAI API. |
+| `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. Choose a Chat Completions model that supports JSON output for command parsing. |
 
-```bash
-export AZURE_API_KEY="your-api-key"
-export AZURE_API_BASE="https://your-endpoint.services.ai.azure.com/openai/v1"
-export AZURE_API_MODEL="your-model-name"
-```
+Each new command can make one API request to parse your input. Actions such as moving can make a second request to narrate the room. The game caches successful results during play. [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
 
 ## How to Run
 
@@ -66,6 +61,8 @@ python main.py
 
 ## Running Tests
 
+Install the development dependencies with `pip install -r requirements-dev.txt`. The tests simulate OpenAI responses and run without credentials.
+
 ```bash
 pytest tests/test_game.py -v
 ```
@@ -87,11 +84,6 @@ source .venv/bin/activate   # Linux/macOS
 # Install dependencies
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
-
-# Set environment variables (required for Azure AI Foundry)
-export AZURE_API_KEY="your-key"
-export AZURE_API_BASE="https://your-endpoint.services.ai.azure.com/openai/v1"
-export AZURE_API_MODEL="your-model-name"
 ```
 
 ### Development Commands
@@ -124,6 +116,6 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org)
 
 ## Documentation
 
-- [API Documentation](https://pjmorr-radpartners.github.io/thegiantsdrink/) — Generated from docstrings
+- [Generate API documentation locally](CONTRIBUTING.md#generating-documentation)
 - [Changelog](CHANGELOG.md) — Version history and release notes
 - [Contributing Guide](CONTRIBUTING.md) — How to contribute

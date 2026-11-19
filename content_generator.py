@@ -1,7 +1,5 @@
 # content_generator.py
-import os
-
-import requests
+from openai_client import complete
 
 SYSTEM_PROMPT = """You are a narrator for a text adventure game called The Giant's Drink.
 Generate atmospheric room descriptions in the style of classic Zork text adventures.
@@ -13,7 +11,7 @@ Incorporate the player's profile to subtly tailor the atmosphere."""
 class ContentGenerator:
     """LLM-powered room description generator with caching and static fallback.
 
-    Uses Azure AI Foundry to produce atmospheric, Zork-style room descriptions
+    Uses OpenAI to produce atmospheric, Zork-style room descriptions
     tailored to the player's behavior profile. Caches generated descriptions
     per room and profile. Falls back to static descriptions when API
     credentials are missing or the request fails.
@@ -27,7 +25,7 @@ class ContentGenerator:
         self._cache = {}
 
     def generate_description(self, room_name, profile, description="", items=None, profile_summary=""):
-        """Generate an atmospheric room description via Azure AI Foundry LLM.
+        """Generate an atmospheric room description via OpenAI.
 
         Caches results per room and profile to avoid redundant API calls.
         Falls back to static description on network or parsing failure.
@@ -44,13 +42,6 @@ class ContentGenerator:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        api_key = os.environ.get("AZURE_API_KEY", "")
-        api_base = os.environ.get("AZURE_API_BASE", "")
-        api_model = os.environ.get("AZURE_API_MODEL", "")
-
-        if not api_key or not api_base or not api_model:
-            return description or f"You are in the {room_name}."
-
         items_text = ", ".join(items) if items else "nothing of note"
         user_prompt = (
             f"Room: {room_name}\n"
@@ -61,33 +52,8 @@ class ContentGenerator:
             f"in Zork style."
         )
 
-        try:
-            url = api_base.rstrip("/") + "/v1/messages"
-            headers = {
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            }
-            payload = {
-                "model": api_model,
-                "max_tokens": 200,
-                "system": SYSTEM_PROMPT,
-                "messages": [
-                    {"role": "user", "content": user_prompt},
-                ],
-            }
-
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
-            response.raise_for_status()
-
-            result = response.json()
-            if "error" in result:
-                print(f"API error: {result['error']}")
-                return description or f"You are in the {room_name}."
-            generated = result["content"][0]["text"].strip()
-
-            self._cache[cache_key] = generated
-            return generated
-
-        except (requests.RequestException, KeyError, IndexError):
+        generated = complete(SYSTEM_PROMPT, user_prompt, max_tokens=200)
+        if not generated:
             return description or f"You are in the {room_name}."
+        self._cache[cache_key] = generated
+        return generated

@@ -33,7 +33,7 @@ Types: `feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`, `style`
 
 ```bash
 # Clone and enter the repo
-git clone https://github.com/pjmorr-radpartners/thegiantsdrink.git
+git clone https://github.com/acechase/thegiantsdrink.git
 cd thegiantsdrink
 
 # Create a virtual environment

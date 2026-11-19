@@ -1,4 +1,9 @@
 # main.py
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
 from adaptation_ai import AdaptationAI
 from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
@@ -26,6 +31,10 @@ def main():
 
 
     """
+    load_dotenv(Path(__file__).with_name(".env"))
+    if not os.getenv("OPENAI_API_KEY"):
+        raise SystemExit("Set OPENAI_API_KEY in your environment or in the game's .env file to play.")
+
     game_state = GameState()
     behavior_analyzer = BehaviorAnalyzer()
     adaptation_ai = AdaptationAI()

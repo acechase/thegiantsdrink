@@ -1,14 +1,13 @@
 # command_parser.py
 import json
-import os
 
-import requests
+from openai_client import complete
 
 SYSTEM_PROMPT = """You are a command parser for a text adventure game called The Giant's Drink.
 The player explores a castle, collects items, and faces a giant.
 
 Valid actions: move, take, use, attack, check, look, help, quit
-Valid move targets: north, south, east, west
+Valid move targets: north, south, east, west, up, down
 Valid check targets: inventory
 
 Parse the player's natural language input into a JSON object with exactly two fields:
@@ -34,7 +33,7 @@ command_cache = {}
 
 
 def parse_command(command):
-    """Parse a player's natural language command using Azure AI Foundry LLM.
+    """Parse a player's natural language command using OpenAI.
 
     Caches results per input string to avoid redundant API calls for repeated
     inputs.  Falls back to ``(None, None)`` on network error or parse failure.
@@ -49,48 +48,13 @@ def parse_command(command):
     if command in command_cache:
         return command_cache[command]
 
-    try:
-        api_key = os.environ.get("AZURE_API_KEY", "")
-        api_base = os.environ.get("AZURE_API_BASE", "")
-        api_model = os.environ.get("AZURE_API_MODEL", "")
-
-        if not api_key or not api_base or not api_model:
-            return None, None
-
-        url = api_base.rstrip("/") + "/v1/messages"
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
-        payload = {
-            "model": api_model,
-            "max_tokens": 100,
-            "system": SYSTEM_PROMPT,
-            "messages": [
-                {"role": "user", "content": command},
-            ],
-        }
-
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        response.raise_for_status()
-
-        result = response.json()
-        if "error" in result:
-            print(f"API error: {result['error']}")
-            return None, None
-        generated_text = result["content"][0]["text"].strip()
-
-        action, target = extract_action_target(generated_text)
-
-        if action and target:
-            command_cache[command] = (action, target)
-            return action, target
-        else:
-            return None, None
-
-    except (requests.RequestException, KeyError, IndexError):
+    generated_text = complete(SYSTEM_PROMPT, command, max_tokens=100, json_output=True)
+    if not generated_text:
         return None, None
+    action, target = extract_action_target(generated_text)
+    if action and target:
+        command_cache[command] = (action, target)
+    return action, target
 
 
 def extract_action_target(text):
@@ -112,7 +76,7 @@ def extract_action_target(text):
             action = data.get("action")
             target = data.get("target")
             valid_actions = {"move", "take", "use", "attack", "check", "look", "help", "quit"}
-            if action in valid_actions and target:
+            if isinstance(action, str) and action in valid_actions and isinstance(target, str) and target:
                 return action, target
         return None, None
     except json.JSONDecodeError:
