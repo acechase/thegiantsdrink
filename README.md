@@ -40,6 +40,7 @@ Copy `.env.example` to `.env` next to `main.py`, then fill in `OPENAI_API_KEY` w
 | `OPENAI_API_KEY` | Required to play. Authenticates requests to the OpenAI API. |
 | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. Choose a Chat Completions model that supports JSON output for command parsing. |
 | `OPENAI_REASONING_EFFORT` | Optional. Sets the reasoning effort for command parsing and room narration. Omit it to use the model's default. |
+| `OPENAI_IMAGE_MODEL` | Optional. The image model for the `--visuals` room companion. Defaults to `gpt-image-2.6-flare`. |
 
 For example, set `OPENAI_MODEL=gpt-6-luna` and `OPENAI_REASONING_EFFORT=low` in your `.env`, then restart the game. Luna accepts `none`, `low`, `medium` (default), `high`, `xhigh`, and `max`. [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna)
 
@@ -51,18 +52,30 @@ Common commands such as `examine the sword` and `take the candle` resolve immedi
 python main.py
 ```
 
+To see each room as you play, add `--visuals`:
+
+```bash
+python main.py --visuals
+```
+
+The game prints a local address and opens it in your browser. The page shows an AI illustration of your current room, its items and exits. It redraws when the room changes, for example when you pick something up, open a passage, or alter the scenery. Each distinct scene is generated once and cached in `.room-art/`, so revisiting an unchanged room costs nothing. The page shows whether an illustration is queued, being generated, or loaded from the cache, and offers a retry if generation fails. The viewer only listens on `127.0.0.1`.
+
 ## How to Play
 
 The terminal shows which parts of each turn use AI. `[AI]` appears as a request starts and names the model and task. `[Cached AI]` means the game reused an earlier model response. `[Procedural]` marks local game rules or written text. Movement, inventory, combat, and difficulty changes all run locally. For example, `go north` can show a procedural move followed by an AI request to describe the destination.
 
+Anything the game describes is something you can act on, whether it appears in the room text, an AI narration, or an examination. Describe what you want to do in your own words, such as `tear down one of the tapestries`, `fill my pockets with gold coins`, or `pry the ring out of the wall with the sword`. When no written rule covers the attempt, the game asks the model to judge it. It labels that request `[AI] ... environmental interaction`. A plausible attempt changes the world. You might take the object or a piece of it, change it, destroy it, or leave a carried item there. The room description is rewritten to match, and that change stays for the rest of the game. An implausible attempt fails with a physical reason or a clue. The game only commits changes to objects that are actually in the scene. The model can't create new objects out of nothing, move exits, or award victory.
+
 | Command | Description |
 |---|---|
 | `look` | Look around the current room |
-| `examine <object>` or `look at <object>` | Inspect a carried item, a visible item, or a nearby landmark |
+| `examine <object>` or `look at <object>` | Inspect anything described here or in your inventory |
 | `go <direction>` | Move north, south, east, west, up, or down |
-| `take <item>` | Pick up an item |
+| `take <item>` | Pick up an item, or try to take something described in the room |
+| `drop <item>` | Set down something you're carrying |
+| `search <object>` | Investigate something closely |
 | `use <item>` | Use an item from your inventory |
-| `use <item> on <object>` | Try a carried tool on something here. You can also describe the attempt in your own words. |
+| `use <item> on <object>` | Try a carried tool on something here |
 | `attack <target>` | Attack something |
 | `inventory` | Check your inventory |
 | `help` | Show available commands |

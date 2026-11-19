@@ -1,11 +1,12 @@
 # game_world.py
+import re
 from dataclasses import dataclass
 
 
 def noun(text):
     """Normalize an object reference while retaining meaningful modifiers."""
     words = text.casefold().strip(" .!?").split()
-    if words and words[0] in ("a", "an", "the", "my"):
+    if words and words[0] in ("a", "an", "the", "my", "your", "teh"):
         words = words[1:]
     return " ".join(words)
 
@@ -15,6 +16,9 @@ def find_object(reference, objects):
     name = noun(reference)
     if not name:
         return None
+    named = [obj for obj in objects if obj.name == name]
+    if named:
+        return named[0]
     partial = []
     for obj in objects:
         names = (obj.name, *obj.aliases)
@@ -35,6 +39,15 @@ class HiddenPassage:
     destination: str
     reveal: str
     visible: str
+
+
+@dataclass(frozen=True)
+class Discovery:
+    """A detail that a deliberate search or a suitable carried tool reveals."""
+
+    tools: tuple
+    response: str
+    detail: str
 
 
 class Room:
@@ -60,15 +73,57 @@ class Room:
         self.description = description
         self.items = items if items else []
         self.exits = exits if exits else {}
-        self.scenery = scenery
+        self.scenery = list(scenery)
         self.passage = passage
+        self.discoveries = {}
+        self.folded = set()
+        self.seen_details = []
+        self.departed = []
+
+    def remember(self, text):
+        """Keep descriptive details the player has actually been shown."""
+        if text and text not in self.visible_text():
+            # Recent narration is enough to ground references without growing every prompt.
+            self.seen_details = [*self.seen_details[-5:], text]
+
+    def visible_text(self):
+        """Include observations and generated narration when resolving references."""
+        return " ".join([self.prose(), *(obj.description for obj in (*self.scenery, *self.items)), *self.seen_details])
+
+    def fixed_text(self):
+        """Describe the room's own features, excluding loose items and opened routes."""
+        return " ".join([self.description, *(d for d in self.discoveries.values() if d not in self.folded)])
+
+    def rewrite(self, description):
+        """Replace the room's own features after a change, absorbing discoveries already described."""
+        self.description = description
+        self.folded.update(self.discoveries.values())
+        self.seen_details.clear()
 
     def prose(self):
         """Describe the room as it currently stands."""
-        parts = [self.description, *(item.room_text for item in self.items if item.room_text)]
+        extras = [item.room_text for item in self.items if item.room_text]
         if self.passage_open:
-            parts.append(self.passage.visible)
-        return " ".join(parts)
+            extras.append(self.passage.visible)
+        extras.extend(d for d in self.discoveries.values() if d not in self.folded)
+        return " ".join([self.description, *(text for text in extras if text and text not in self.description)])
+
+    def landmark(self, reference):
+        """Find authored scenery or ground a phrase in a sentence of visible room prose."""
+        fixture = find_object(reference, self.scenery)
+        if fixture:
+            return fixture
+        if find_object(reference, self.departed):
+            return None
+        name = noun(reference)
+        if len(name) < 2 or len(name) > 80:
+            return None
+        # A singular or plural reference can point to a detail with no special game rule.
+        pattern = r"\b" + re.escape(name.removesuffix("s")) + r"s?\b"
+        for sentence in re.split(r"(?<=[.!?])\s+", self.visible_text()):
+            if re.search(pattern, sentence, re.IGNORECASE):
+                return Item(name, sentence)
+        return None
 
     @property
     def passage_open(self):
@@ -85,7 +140,7 @@ class Item:
         usable: Whether the item can be activated with the 'use' command.
     """
 
-    def __init__(self, name, description, usable=False, *, aliases=(), room_text=""):
+    def __init__(self, name, description, usable=False, *, aliases=(), room_text="", discovery=None):
         """Initialize an Item with a name, description, and usability flag.
 
         name (str): Display name of the item.
@@ -98,6 +153,7 @@ class Item:
         self.usable = usable
         self.aliases = aliases
         self.room_text = room_text
+        self.discovery = discovery
 
 
 # ── Items ────────────────────────────────────────────────────────────
@@ -349,12 +405,29 @@ victory_chamber = Room(
 dungeon = Room(
     name="Dungeon",
     description=(
-        "Damp stone walls press close in this underground cell. Chains hang from iron "
-        "rings, and the only daylight comes from a grate far above."
+        "Damp stone walls press close in this underground cell. A row of iron rings runs along one wall. "
+        "The only daylight comes from a grate far above."
     ),
-    items=[iron_helm],
+    items=[
+        iron_helm,
+        Item("iron chain", "Its last link is polished bright. One end is open like a hook.",
+             aliases=("chains", "iron chains", "chain links"), room_text="An iron chain hangs in loose loops from one ring."),
+    ],
     exits={"up": "Starting Room"},
-    scenery=(Item("iron chains", "The last link of each chain has been polished bright by many hands.", aliases=("chain",)),),
+    scenery=(
+        Item("iron rings", "Three rings sit side by side at shoulder height. The middle one is worn smooth.",
+             aliases=("ring", "iron ring", "wall rings"),
+             discovery=Discovery(("rusty sword", "iron helm", "iron chain"),
+                                 "The rings answer in three different notes. Flakes of rust fall away from the middle ring.",
+                                 "A tiny bell is stamped into the middle iron ring.")),
+        Item("stone walls", "Moisture beads on the stones. One patch below the rings is strangely dry.",
+             aliases=("wall", "stone wall", "cell walls", "damp walls", "masonry", "stones"),
+             discovery=Discovery(("rusty sword", "iron helm", "iron chain"),
+                                 "Pale grit falls from the dry patch. Underneath it, someone scratched a row of marks.",
+                                 "Seven tally marks cross the dungeon wall; the last curves into the shape of a bell.")),
+        Item("overhead grate", "A thin square of daylight falls through iron bars high above your head.",
+             aliases=("iron grate", "grating", "bars")),
+    ),
 )
 
 # ── World Map ────────────────────────────────────────────────────────

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Giant’s Drink · Room companion</title>
+<style>
+  :root { color-scheme: light; --paper: #f4f0e5; --ink: #252b27; --line: #c9c6b7; --brass: #806240; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.5 "Source Sans 3", system-ui, sans-serif; }
+  .page { max-width: 1480px; padding: 0 clamp(20px, 5vw, 82px) 36px; margin: auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 24px 0 17px;
+           border-bottom: 1px solid var(--ink); }
+  .title, h1, .prose { font-family: "Baskervville", "Iowan Old Style", Georgia, serif; }
+  .title { font-size: clamp(21px, 3vw, 33px); font-style: italic; }
+  .label, dt, figcaption { font: 600 11px/1.5 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .1em; }
+  .label, dt { text-transform: uppercase; color: var(--brass); }
+  main { display: grid; grid-template-columns: minmax(0, 2.35fr) minmax(220px, 1fr); gap: clamp(24px, 4vw, 64px);
+         margin-top: clamp(24px, 5vw, 72px); align-items: start; }
+  figure { margin: 0; }
+  .plate { padding: 6px; border: 1px solid #b5af9e; background: #e5e0d2; }
+  #stage { aspect-ratio: 3/2; position: relative; overflow: hidden; background: radial-gradient(ellipse at 46% 55%, #373d38, #1b2323); }
+  #stage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #waiting { position: absolute; inset: 0; display: grid; place-items: center; color: #e3ddca; font: italic 20px Georgia, serif; }
+  [hidden] { display: none !important; }
+  figcaption { margin-top: 12px; color: #575b50; letter-spacing: .035em; font-weight: 400; }
+  article { border-top: 3px double var(--line); padding-top: 16px; }
+  h1 { font-weight: 500; font-size: clamp(37px, 4.5vw, 72px); line-height: 1; letter-spacing: -.045em; margin: 0 0 22px; }
+  .prose { font-size: clamp(17px, 1.55vw, 23px); line-height: 1.47; margin: 0 0 25px; }
+  dl { margin: 0; } dt { padding-top: 12px; border-top: 1px solid var(--line); }
+  dd { margin: 4px 0 13px; font-size: 15px; }
+  button { padding: 6px 12px; background: transparent; color: var(--ink); border: 1px solid var(--brass); margin-top: 8px; cursor: pointer; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } article { padding-top: 12px; } h1 { margin-bottom: 12px; } }
+</style>
+<div class="page">
+  <header><span class="title">The Giant’s Drink</span><span class="label">Room companion</span></header>
+  <main>
+    <figure><div class="plate"><div id="stage"><span id="waiting">Waiting for the game…</span></div></div>
+      <figcaption id="status" role="status">Connecting to the game…</figcaption>
+      <button id="retry" hidden>Retry illustration</button>
+    </figure>
+    <article><h1 id="name">Room view</h1><p class="prose" id="description"></p>
+      <dl><dt>In view</dt><dd id="items">—</dd><dt>Exits</dt><dd id="exits">—</dd></dl>
+    </article>
+  </main>
+</div>
+<script>
+  const element = id => document.getElementById(id);
+  let currentKey, imageURL, previous;
+  function render(scene) {
+    if (!scene.key) return;
+    currentKey = scene.key;
+    element("name").textContent = scene.name;
+    element("description").textContent = scene.description;
+    element("items").textContent = scene.items.join(" · ") || "No loose items";
+    element("exits").textContent = scene.exits.join(" · ") || "None visible";
+    const messages = {queued: "Illustration queued", generating: "AI illustrating · " + scene.model,
+      cached: "Cached AI illustration · " + scene.model, ready: "AI illustration · " + scene.model, error: scene.error};
+    element("status").textContent = messages[scene.status];
+    element("retry").hidden = scene.status !== "error";
+    const waiting = element("waiting");
+    waiting.textContent = scene.status === "error" ? "Illustration unavailable" : "Illustrating the room…";
+    if (imageURL === scene.image) return;
+    imageURL = scene.image;
+    element("stage").querySelector("img")?.remove();
+    waiting.hidden = false;
+    if (!imageURL) return;
+    const img = new Image();
+    img.alt = "An AI illustration of " + scene.name;
+    img.onload = () => {
+      if (imageURL !== scene.image) return;
+      element("stage").append(img);
+      waiting.hidden = true;
+    };
+    img.onerror = () => {
+      if (imageURL !== scene.image) return;
+      waiting.textContent = "Illustration unavailable";
+      imageURL = undefined;
+      previous = undefined;
+    };
+    img.src = imageURL;
+  }
+  async function poll() {
+    try {
+      const response = await fetch("/state", {cache: "no-store"});
+      if (!response.ok) throw Error();
+      const state = await response.text();
+      if (state !== previous) { previous = state; render(JSON.parse(state)); }
+    } catch {
+      previous = undefined;
+      element("status").textContent = "Game disconnected";
+      element("retry").hidden = true;
+    } finally { setTimeout(poll, 800); }
+  }
+  element("retry").onclick = async () => {
+    element("retry").disabled = true;
+    try { await fetch("/retry/" + currentKey, {method: "POST"}); }
+    catch { element("status").textContent = "Game disconnected"; }
+    finally { element("retry").disabled = false; }
+  };
+  poll();
+</script>
+</html>

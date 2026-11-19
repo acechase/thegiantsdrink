@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .env
+.room-art/
 .idea/
 model_cache/
 transformers_cache/

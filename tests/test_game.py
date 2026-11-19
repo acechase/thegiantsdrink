@@ -101,7 +101,7 @@ class TestItemUse:
         assert "no telescope" in game.use_on("sword", "telescope", wmap)
         assert "Nothing happens" in game.use_on("sword", "shelf", wmap)
         game.move("north", wmap)
-        assert "no walls" in game.use_on("sword", "walls", wmap)
+        assert "no iron rings" in game.use_on("sword", "iron rings", wmap)
         assert "down" not in start.exits
 
     def test_use_potion(self, game, wmap):
@@ -713,3 +713,181 @@ class TestEndToEnd:
         output = _run_game(openai_api, ["xyzzy", "quit"], [None, ("quit", "game")])
         assert "do not understand" in output.lower()
         assert "thanks for playing" in output.lower()
+
+
+# ── Environmental interaction ────────────────────────────────────────
+
+
+def adjudication(**reply):
+    return completion(json.dumps(reply))
+
+
+def sent_scene(openai_api, index=0):
+    return json.loads(json.loads(openai_api.calls[index].request.body)["messages"][1]["content"])
+
+
+class TestEnvironment:
+    def test_piece_of_described_scenery_can_be_taken(self, openai_api, game, wmap):
+        game.move("north", wmap)
+        corridor = wmap["Corridor"]
+        openai_api.post(
+            OPENAI_URL,
+            json=adjudication(
+                effect="detach",
+                anchor="tapestries",
+                reply="You tear one tapestry from the wall.",
+                room_after="A long passage. One tapestry is missing from the walls.",
+                description="A gap shows where one tapestry hung.",
+                piece="tapestry",
+                piece_description="A rolled tapestry of feasting giants.",
+            ),
+        )
+        assert game.investigate("tapestries", wmap, "tear down a tapestry") == "You tear one tapestry from the wall."
+        assert [item.name for item in game.inventory] == ["tapestry"]
+        assert corridor.prose() == "A long passage. One tapestry is missing from the walls."
+        assert sent_scene(openai_api)["fixed_features"].startswith("A long passage stretches")
+
+    def test_detail_mentioned_only_in_prose_can_be_taken(self, openai_api, game, wmap):
+        for direction in ("north", "east"):
+            game.move(direction, wmap)
+        treasury = wmap["Treasure Room"]
+        openai_api.post(
+            OPENAI_URL,
+            json=adjudication(
+                effect="take",
+                anchor="gold coins",
+                reply="You scoop up the coins.",
+                room_after="Faceted jewels lie across the floor around a marble pedestal.",
+                description="A clinking handful of gold coins.",
+            ),
+        )
+        assert game.take_item("gold coins", wmap, command="fill my pockets with gold coins") == "You scoop up the coins."
+        assert [item.name for item in game.inventory] == ["gold coins"]
+        assert "gold" not in treasury.prose().casefold()
+        assert treasury.landmark("gold coins") is None
+
+    def test_invented_or_substituted_subjects_are_rejected(self, openai_api, game, wmap):
+        start = wmap["Starting Room"]
+        before = start.prose()
+        openai_api.post(OPENAI_URL, json=adjudication(effect="take", anchor="golden crown", reply="You take it.",
+                                                      room_after="An empty room.", description="A crown."))
+        openai_api.post(OPENAI_URL, json=adjudication(effect="take", anchor="candle", reply="You take the candle.",
+                                                      room_after="An empty room.", description="A candle."))
+        assert game.take_item("golden crown", wmap, command="take the golden crown") == "There is no such item here."
+        assert game.investigate("shelf", wmap, "lift the shelf").startswith("A shallow stone ledge")
+        assert game.inventory == [] and start.prose() == before
+
+    def test_rewrite_absorbs_discoveries_without_repeating_sentences(self, openai_api, game, wmap):
+        dungeon = wmap["Dungeon"]
+        game.current_room = "Dungeon"
+        assert "Seven tally marks" in game.investigate("stone walls", wmap, None, search=True)
+        tally = dungeon.discoveries["stone walls"]
+        helm = "An iron helm rests in the corner, forgotten by some earlier prisoner."
+        openai_api.post(
+            OPENAI_URL,
+            json=adjudication(
+                effect="alter",
+                anchor="overhead grate",
+                reply="The grate rattles loose.",
+                room_after=f"Damp stone walls press close. The grate above hangs askew. {helm} {tally}",
+                description="The grate hangs askew.",
+            ),
+        )
+        assert game.investigate("overhead grate", wmap, "rattle the grate") == "The grate rattles loose."
+        scene = dungeon.prose()
+        assert scene.count("Seven tally marks") == 1 and scene.count("iron helm rests") == 1
+        assert sent_scene(openai_api)["engine_sentences"][0] == helm
+        assert game.examine("stone walls", wmap).count("Seven tally marks") == 1
+
+    def test_tool_reveals_a_discovery_once(self, game, wmap):
+        game.inventory.append(wmap["Starting Room"].items[0])
+        game.current_room = "Dungeon"
+        first = game.use_on("sword", "iron rings", wmap)
+        assert "three different notes" in first and "tiny bell" in first
+        assert game.use_on("sword", "iron rings", wmap) == "A tiny bell is stamped into the middle iron ring."
+        assert wmap["Dungeon"].prose().count("tiny bell") == 1
+
+    def test_drop_and_retake(self, game, wmap):
+        game.take_item("sword", wmap)
+        game.move("north", wmap)
+        assert game.drop_item("sword", wmap) == "You set down the rusty sword."
+        assert [item.name for item in wmap["Corridor"].items] == ["rusty sword"]
+        assert game.drop_item("sword", wmap) == "You're not carrying the sword."
+        assert game.take_item("sword", wmap) == "You take the rusty sword."
+
+    def test_attack_accepts_a_described_giant(self, openai_api):
+        inputs = ["take sword", "go north", "go north", "go up", "go north", "swing at the sleeping giant"]
+        replies = [None] * 5 + [("attack", "the sleeping giant")]
+        output = _run_game(openai_api, inputs, replies)
+        assert "congratulations" in output.lower()
+
+
+# ── Room companion ───────────────────────────────────────────────────
+
+
+def _wait_for(predicate, timeout=5):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+class TestRoomCompanion:
+    def test_illustrates_each_distinct_scene(self, monkeypatch, tmp_path, wmap):
+        import room_companion
+
+        requests_made = []
+        monkeypatch.setattr(
+            room_companion, "generate_image", lambda payload: requests_made.append(payload) or b"\xff\xd8\xffart\xff\xd9"
+        )
+        viewer = room_companion.RoomCompanion(tmp_path, "test-image")
+        try:
+            room = wmap["Starting Room"]
+            viewer.show(room)
+            _wait_for(lambda: viewer.snapshot()["status"] == "ready")
+            first = viewer.snapshot()
+            assert first["image"] == f"/art/{first['key']}.jpg"
+            assert (tmp_path / f"{first['key']}.jpg").read_bytes() == b"\xff\xd8\xffart\xff\xd9"
+            viewer.show(room)
+            room.items.remove(room.items[0])
+            viewer.show(room)
+            _wait_for(lambda: len(requests_made) == 2 and viewer.snapshot()["status"] == "ready")
+            assert "rusty sword" in requests_made[0]["prompt"] and "rusty sword" not in requests_made[1]["prompt"]
+            room.items.insert(0, wmap["Starting Room"].items[0])
+        finally:
+            viewer.close()
+
+    def test_failed_scene_can_be_retried(self, monkeypatch, tmp_path, wmap):
+        import room_companion
+
+        outcomes = [RuntimeError("Image request failed (HTTP 429)."), b"\xff\xd8\xffart\xff\xd9"]
+
+        def generate(payload):
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        monkeypatch.setattr(room_companion, "generate_image", generate)
+        viewer = room_companion.RoomCompanion(tmp_path, "test-image")
+        try:
+            viewer.show(wmap["Corridor"])
+            _wait_for(lambda: viewer.snapshot()["status"] == "error")
+            assert "429" in viewer.snapshot()["error"]
+            assert not viewer.retry("stale-key")
+            assert viewer.retry(viewer.snapshot()["key"])
+            _wait_for(lambda: viewer.snapshot()["status"] == "ready")
+        finally:
+            viewer.close()
+
+
+def test_described_use_of_a_plain_item_is_judged(openai_api, game, wmap):
+    game.take_item("sword", wmap)
+    openai_api.post(OPENAI_URL, json=adjudication(effect="observe", anchor="rusty sword", reply="You test the edge."))
+    assert game.use_item("sword", world_map=wmap, command="use the sword") == (
+        "You're holding the rusty sword. What would you like to use it on?"
+    )
+    assert game.use_item("sword", world_map=wmap, command="run my thumb along the blade") == "You test the edge."
+    assert len(openai_api.calls) == 1

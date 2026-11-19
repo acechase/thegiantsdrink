@@ -15,20 +15,25 @@ class ToolUse(NamedTuple):
 
 
 SYSTEM_PROMPT = """Interpret one player's command for a castle exploration game. Return only a JSON object.
-Actions: move, take, use, use_on, examine, attack, check, look, help, quit, unknown.
+Actions: move, take, drop, use, use_on, examine, search, interact, attack, check, look, help, quit, unknown.
 Use "look" with target "around" only for the whole room. Looking at, inspecting or examining an object is "examine".
 For "take", "use", "examine", or "attack", target is the object name. For "check", target is "inventory".
 For "move", target is north, south, east, west, up or down. For "help" and "quit", use "commands" and "game".
 When the player uses an object to do something to another object, preserve BOTH nouns, even if the attempt may fail.
 Examples: "listen for hollow stone by tapping it with my staff" -> {"action":"use_on","tool":"staff","target":"stone wall"}
 "read the book" -> {"action":"use","target":"book"}; "study the book's cover" -> {"action":"examine","target":"book"}.
-Use the supplied scene to resolve references to objects. Keep missing objects as requested. Never invent a successful outcome.
+Acting on yourself with an item is "use": "wrap the cloak around my shoulders" -> {"action":"use","target":"cloak"}.
+Use "search" for a deliberate search of a named object, "drop" to set down a carried item.
+Use "interact" with the subject as target for other intentional acts such as turning, pulling, bending or humming at something.
+Interpret misspellings. Use the supplied scene to resolve references, including details in prose.
+Reserve "attack" for an adversary. Keep missing objects as requested. Never invent a successful outcome.
 If you cannot identify an action, return {"action":"unknown","target":""}."""
 
 command_cache = {}
 SIMPLE_COMMANDS = {
     "look": ("look", "around"),
     "look around": ("look", "around"),
+    "look around the room": ("look", "around"),
     "inventory": ("check", "inventory"),
     "help": ("help", "commands"),
     "quit": ("quit", "game"),
@@ -38,13 +43,13 @@ SIMPLE_COMMANDS = {
 
 def _direct_command(command, objects):
     """Resolve common unambiguous commands immediately."""
-    text = " ".join(command.casefold().strip(" .!?").split())
+    text = " ".join("the" if word == "teh" else word for word in command.casefold().strip(" .!?").split())
     if text in SIMPLE_COMMANDS:
         return SIMPLE_COMMANDS[text]
     match = re.fullmatch(r"(?:go |move )?(north|south|east|west|up|down)", text)
     if match:
         return "move", match[1]
-    match = re.fullmatch(r"(look at|examine|inspect|x|pick up|take|get|use) (.+)", text)
+    match = re.fullmatch(r"(look at|examine|inspect|x|pick up|take|get|drop|search|use) (.+)", text)
     if not match:
         return None
     verb, reference = match.groups()
@@ -56,8 +61,8 @@ def _direct_command(command, objects):
     if obj:
         if verb in ("pick up", "take", "get"):
             return "take", obj.name
-        if verb == "use":
-            return "use", obj.name
+        if verb in ("use", "drop", "search"):
+            return verb, obj.name
         return "examine", obj.name
     return None
 
@@ -77,7 +82,7 @@ def parse_command(command, room=None, inventory=(), *, report=None):
     if room:
         scene = {
             "room": room.name,
-            "description": room.prose(),
+            "description": room.visible_text(),
             "exits": list(room.exits),
             "items": [obj.name for obj in room.items],
             "scenery": [obj.name for obj in room.scenery],
@@ -123,7 +128,9 @@ def extract_action_target(text):
                 if isinstance(tool, str) and isinstance(target, str) and noun(tool) and noun(target):
                     return action, ToolUse(noun(tool), noun(target))
                 return None, None
-            valid_actions = {"move", "take", "use", "attack", "check", "look", "examine", "help", "quit"}
+            valid_actions = {
+                "move", "take", "drop", "use", "attack", "check", "look", "examine", "search", "interact", "help", "quit"
+            }
             if isinstance(action, str) and action in valid_actions and isinstance(target, str) and target:
                 return action, target.strip()
         return None, None

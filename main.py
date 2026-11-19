@@ -1,7 +1,8 @@
 # main.py
+import argparse
 import os
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -12,7 +13,8 @@ from adaptation_ai import AdaptationAI
 from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
 from content_generator import ContentGenerator
-from game_world import world_map
+from game_world import find_object, noun, world_map
+from room_companion import open_companion
 from simulation_engine import GameState
 
 HELP_TEXT = """Available commands:
@@ -20,6 +22,8 @@ HELP_TEXT = """Available commands:
   EXAMINE <object> - Inspect something here or in your inventory
   GO <direction> - Move through a listed exit
   TAKE <item>   - Pick up an item
+  DROP <item>   - Set something down here
+  SEARCH <object> - Investigate a detail, or describe your own experiment
   USE <item>    - Use an item from your inventory
   USE <item> ON <object> - Try a tool on something nearby
   ATTACK <target> - Attack something
@@ -52,7 +56,7 @@ def _quiet_typeahead():
         termios.tcsetattr(fd, termios.TCSANOW, previous)
 
 
-def main():
+def main(*, visuals=False):
     """Run the main game loop for The Giant's Drink text adventure.
 
     Initializes GameState, behavior analyzer, adaptation AI, and content generator.
@@ -65,6 +69,11 @@ def main():
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY in your environment or in the game's .env file to play.")
 
+    with open_companion() if visuals else nullcontext(None) as viewer:
+        _play(viewer)
+
+
+def _play(viewer):
     rooms = deepcopy(world_map)
     # Python's input() uses readline for editing, history and redisplaying queued input.
     if sys.stdin.isatty():
@@ -82,6 +91,8 @@ def main():
     print("Type HELP for a list of commands.\n")
     report("[Procedural] Opening room.")
     print(game_state.get_current_description(rooms))
+    if viewer:
+        viewer.show(rooms[game_state.current_room])
 
     while not game_state.giant_defeated:
         command = input("\n> ").strip()
@@ -103,21 +114,27 @@ def main():
                     behavior_analyzer.update_profile("move")
             elif action == "take" and target:
                 held = len(game_state.inventory)
-                result = game_state.take_item(target, rooms)
+                result = game_state.take_item(target, rooms, command=command, report=report)
                 if len(game_state.inventory) > held:
                     behavior_analyzer.update_profile("take")
+            elif action == "drop":
+                result = game_state.drop_item(target, rooms)
             elif action == "use" and target:
                 difficulty = adaptation_ai.get_difficulty()
-                result = game_state.use_item(target, difficulty)
+                if find_object(target, game_state.inventory):
+                    result = game_state.use_item(target, difficulty, world_map=rooms, command=command, report=report)
+                else:
+                    result = game_state.investigate(target, rooms, command, report=report)
                 behavior_analyzer.update_profile("use")
                 if game_state.book_knowledge:
                     behavior_analyzer.mark_book_read()
             elif action == "use_on":
                 was_open = room.passage_open
-                result = game_state.use_on(target.tool, target.subject, rooms, adaptation_ai.get_difficulty())
+                result = game_state.use_on(target.tool, target.subject, rooms, adaptation_ai.get_difficulty(),
+                                           command=command, report=report)
                 if room.passage_open and not was_open:
                     behavior_analyzer.update_profile("discover")
-            elif action == "attack" and target:
+            elif action == "attack" and target and "giant" in noun(target).split():
                 difficulty = adaptation_ai.get_difficulty()
                 result = game_state.attack(target, difficulty)
                 behavior_analyzer.update_profile("attack")
@@ -131,7 +148,9 @@ def main():
             elif action == "look" and target in ("around", "room"):
                 result = game_state.get_current_description(rooms)
             elif action in ("examine", "look"):
-                result = game_state.examine(target, rooms)
+                result = game_state.examine(target, rooms, command=command, report=report)
+            elif action in ("interact", "search", "attack"):
+                result = game_state.investigate(target, rooms, command, search=action == "search", report=report)
             elif action == "help":
                 result = HELP_TEXT
             elif action == "quit":
@@ -146,6 +165,8 @@ def main():
             adaptation_ai.adapt_world(rooms, profile, profile_summary)
 
             print(result)
+            if viewer:
+                viewer.show(rooms[game_state.current_room])
             if game_state.current_room != previous_room:
                 room = rooms[game_state.current_room]
                 description = content_gen.generate_description(
@@ -156,10 +177,13 @@ def main():
                     profile_summary=profile_summary,
                     report=report,
                 )
+                room.remember(description)
                 print(game_state.get_current_description(rooms, description=description))
 
     print("\nCongratulations! You have defeated the giant and won the game!")
 
 
 if __name__ == "__main__":
-    main()
+    cli = argparse.ArgumentParser(description="Play The Giant's Drink.")
+    cli.add_argument("--visuals", action="store_true", help="Open a local browser companion with AI room illustrations.")
+    main(visuals=cli.parse_args().visuals)

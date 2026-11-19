@@ -1,5 +1,6 @@
 # simulation_engine.py
-from game_world import find_object
+from environment_actions import resolve_environment
+from game_world import find_object, noun
 
 
 class GameState:
@@ -45,7 +46,7 @@ class GameState:
             return f"You move to the {self.current_room}."
         return "You can't go that way."
 
-    def take_item(self, item_name, world_map):
+    def take_item(self, item_name, world_map, *, command=None, report=None):
         """Pick up an item from the current room and add it to inventory.
 
         item_name (str): Name or partial name of the item to take (case-insensitive).
@@ -58,27 +59,53 @@ class GameState:
         if item:
             self.inventory.append(item)
             room.items.remove(item)
+            item.room_text = ""
+            if item not in room.departed:
+                room.departed.append(item)
             return f"You take the {item.name}."
         held = find_object(item_name, self.inventory)
         if held:
             return f"You're already carrying the {held.name}."
-        fixture = find_object(item_name, room.scenery)
-        if fixture:
-            return f"You can't carry the {fixture.name}."
-        return "There is no such item here."
+        return resolve_environment(self, room, command, item_name, report=report,
+                                   fallback="There is no such item here." if not room.landmark(item_name) else None)
 
-    def examine(self, reference, world_map):
+    def drop_item(self, reference, world_map):
+        """Return a carried object to the current room."""
+        item = find_object(reference, self.inventory)
+        if not item:
+            return f"You're not carrying the {reference}."
+        self.inventory.remove(item)
+        room = world_map[self.current_room]
+        room.items.append(item)
+        if item in room.departed:
+            room.departed.remove(item)
+        return f"You set down the {item.name}."
+
+    def examine(self, reference, world_map, *, command=None, report=None):
         """Inspect a carried item or an object at the player's location."""
         room = world_map[self.current_room]
         obj = find_object(reference, [*self.inventory, *room.items, *room.scenery])
         if not obj:
-            return f"You see no {reference} here or in your inventory."
+            return resolve_environment(self, room, command, reference, report=report)
         passage = room.passage
         if room.passage_open and obj.name == passage.landmark:
             return passage.visible
         return obj.description
 
-    def use_on(self, tool_name, target_name, world_map, difficulty=1.0):
+    def investigate(self, reference, world_map, command, *, search=False, tool=None, report=None):
+        """Reveal authored clues or adjudicate the player's own environmental experiment."""
+        room = world_map[self.current_room]
+        obj = find_object(reference, [*room.scenery, *room.items, *self.inventory])
+        if obj and obj.discovery and (search or (tool and tool.name in obj.discovery.tools)):
+            if obj.name in room.discoveries:
+                return room.discoveries[obj.name]
+            room.discoveries[obj.name] = obj.discovery.detail
+            obj.description = f"{obj.description} {obj.discovery.detail}"
+            return f"{obj.discovery.response} {obj.discovery.detail}"
+        fallback = f"You try the {tool.name} on the {obj.name}. Nothing happens." if tool and obj else None
+        return resolve_environment(self, room, command, reference, tool=tool, report=report, fallback=fallback)
+
+    def use_on(self, tool_name, target_name, world_map, difficulty=1.0, *, command=None, report=None):
         """Resolve an attempted tool interaction against the current world."""
         room = world_map[self.current_room]
         tool = find_object(tool_name, self.inventory)
@@ -86,7 +113,7 @@ class GameState:
             return f"You need to be carrying the {tool_name} first."
         target = find_object(target_name, [*room.scenery, *room.items, *self.inventory])
         if not target:
-            return f"You see no {target_name} here or in your inventory."
+            return self.investigate(target_name, world_map, command, tool=tool, report=report)
 
         passage = room.passage
         if passage and (tool.name, target.name) == (passage.tool, passage.landmark):
@@ -98,13 +125,22 @@ class GameState:
             return self.attack("giant", difficulty)
         if (tool.name, target.name) in {("key", "iron door"), ("crystal vial", "giant")}:
             return self.use_item(tool.name, difficulty)
-        return f"You try the {tool.name} on the {target.name}. Nothing happens."
+        return self.investigate(target.name, world_map, command, tool=tool, report=report)
 
-    def use_item(self, item_name, difficulty=1.0):
+    def _improvise(self, item, prompt, world_map, command, report):
+        """Let the model judge a described use of a carried item that has no written effect."""
+        words = noun(command or "").split()
+        if world_map is None or not words or (words[0] == "use" and find_object(" ".join(words[1:]), [item]) is item):
+            return prompt
+        room = world_map[self.current_room]
+        return resolve_environment(self, room, command, item.name, report=report, fallback=prompt)
+
+    def use_item(self, item_name, difficulty=1.0, *, world_map=None, command=None, report=None):
         """Use an item from the player's inventory, triggering its effect.
 
         item_name (str): Name or partial name of the item to use (case-insensitive).
         difficulty (float, optional): Current game difficulty multiplier. Defaults to 1.0.
+        world_map, command, report: When supplied, a described use with no written effect is judged by the model.
 
         str: Description of the item's effect or error message.
         """
@@ -112,7 +148,8 @@ class GameState:
         if not item:
             return "You can't use that item or it's not in your inventory."
         if item.name == "rusty sword":
-            return "You're holding the rusty sword. What would you like to use it on?"
+            prompt = "You're holding the rusty sword. What would you like to use it on?"
+            return self._improvise(item, prompt, world_map, command, report)
         if item.name == "candle":
             return "You lift the candle. Its flame throws your shadow across the room."
         if item.usable:
@@ -148,7 +185,7 @@ class GameState:
                 return "The torch flares brightly, pushing shadows to the walls."
             elif "helm" in item.name.lower():
                 return "You put on the iron helm. You feel tougher."
-        return f"What would you like to use the {item.name} on?"
+        return self._improvise(item, f"What would you like to use the {item.name} on?", world_map, command, report)
 
     def attack(self, target, difficulty=1.0):
         """Attack a target using equipped weapons, potentially defeating the giant.
