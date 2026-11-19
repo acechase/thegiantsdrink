@@ -425,7 +425,12 @@ class TestContentGenerator:
     def test_generate_description_fallback_on_error(self, openai_api, reply):
         openai_api.post(OPENAI_URL, **reply)
         cg = ContentGenerator()
-        assert cg.generate_description("Starting Room", {}, description="static desc") == "static desc"
+        events = []
+        assert cg.generate_description("Starting Room", {}, description="static desc", report=events.append) == "static desc"
+        assert events == [
+            "[AI] Calling gpt-5.4-mini for room narration...",
+            "[Procedural] Using the written room description.",
+        ]
 
 
 def test_missing_api_key(openai_api, monkeypatch):
@@ -434,8 +439,10 @@ def test_missing_api_key(openai_api, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY")
     with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
         main.main()
-    assert parse_command("head towards the north") == (None, None)
-    assert ContentGenerator().generate_description("Library", {}) == "You are in the Library."
+    events = []
+    assert parse_command("head towards the north", report=events.append) == (None, None)
+    assert ContentGenerator().generate_description("Library", {}, report=events.append) == "You are in the Library."
+    assert events == ["[Procedural] Using the written room description."]
     assert not openai_api.calls
 
 
@@ -449,6 +456,7 @@ def test_play_with_dotenv_settings(openai_api, monkeypatch, tmp_path, effort):
         output = _run_game(openai_api, ["head north, please", "time to leave"], [("move", "north"), ("quit", "game")])
     assert "Thanks for playing" in output
     assert len(openai_api.calls) == 3  # Move, narrate the room, quit.
+    assert output.count("[AI] Calling gpt-6-luna") == len(openai_api.calls)
     for call in openai_api.calls:
         assert call.request.headers["Authorization"] == "Bearer dotenv-test-key"
         payload = json.loads(call.request.body)
@@ -509,6 +517,29 @@ def _run_game(openai_api, inputs, commands):
 
 
 class TestEndToEnd:
+    def test_activity_matches_actual_requests(self, openai_api):
+        ask = "what is making that light?"
+        inputs = ["look", ask, ask, "go north", "go south", "go north", "quit"]
+        output = _run_game(openai_api, inputs, [None, ("examine", "candle"), ("examine", "candle"), None, None, None, None])
+        labels = [line for line in output.splitlines() if line.startswith("[")]
+        assert labels == [
+            "[Procedural] Opening room.",
+            "[Procedural] Resolving look.",
+            "[AI] Calling gpt-5.4-mini for command interpretation...",
+            "[Procedural] Resolving examine.",
+            "[Cached AI] Reusing command interpretation.",
+            "[Procedural] Resolving examine.",
+            "[Procedural] Resolving move.",
+            "[AI] Calling gpt-5.4-mini for room narration...",
+            "[Procedural] Resolving move.",
+            "[AI] Calling gpt-5.4-mini for room narration...",
+            "[Procedural] Resolving move.",
+            "[Cached AI] Reusing room narration.",
+            "[Procedural] Resolving quit.",
+        ]
+        assert len(openai_api.calls) == output.count("[AI]")
+        assert "You move to the Corridor.\n[AI]" in output
+
     def test_opening_room_transcript(self, openai_api):
         probe = "use the sword to strike the walls of room to see if any stones are loose"
         inputs = [

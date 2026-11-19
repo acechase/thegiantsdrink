@@ -25,7 +25,7 @@ class ContentGenerator:
         """Initialize ContentGenerator with an empty description cache."""
         self._cache = {}
 
-    def generate_description(self, room_name, profile, description="", items=None, profile_summary=""):
+    def generate_description(self, room_name, profile, description="", items=None, profile_summary="", *, report=None):
         """Generate an atmospheric room description via OpenAI.
 
         Caches results per room and profile to avoid redundant API calls.
@@ -41,6 +41,8 @@ class ContentGenerator:
         """
         cache_key = (room_name, profile_summary, description, tuple(items or ()))
         if cache_key in self._cache:
+            if report is not None:
+                report("[Cached AI] Reusing room narration.")
             return self._cache[cache_key]
 
         items_text = ", ".join(items) if items else "nothing of note"
@@ -53,8 +55,10 @@ class ContentGenerator:
             f"in Zork style."
         )
 
-        generated = complete(SYSTEM_PROMPT, user_prompt, max_tokens=200)
+        generated = complete(SYSTEM_PROMPT, user_prompt, max_tokens=200, purpose="room narration", report=report)
         if not generated:
+            if report is not None:
+                report("[Procedural] Using the written room description.")
             return description or f"You are in the {room_name}."
         self._cache[cache_key] = generated
         return generated

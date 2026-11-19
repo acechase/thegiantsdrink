@@ -53,6 +53,8 @@ python main.py
 
 ## How to Play
 
+The terminal shows which parts of each turn use AI. `[AI]` appears as a request starts and names the model and task. `[Cached AI]` means the game reused an earlier model response. `[Procedural]` marks local game rules or written text. Movement, inventory, combat, and difficulty changes all run locally. For example, `go north` can show a procedural move followed by an AI request to describe the destination.
+
 | Command | Description |
 |---|---|
 | `look` | Look around the current room |

@@ -3,6 +3,7 @@ import os
 import sys
 from contextlib import contextmanager
 from copy import deepcopy
+from functools import partial
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -75,9 +76,11 @@ def main():
     behavior_analyzer = BehaviorAnalyzer()
     adaptation_ai = AdaptationAI()
     content_gen = ContentGenerator()
+    report = partial(print, flush=True)
 
     print("Welcome to The Giant's Drink!")
     print("Type HELP for a list of commands.\n")
+    report("[Procedural] Opening room.")
     print(game_state.get_current_description(rooms))
 
     while not game_state.giant_defeated:
@@ -88,8 +91,12 @@ def main():
         with _quiet_typeahead():
             previous_room = game_state.current_room
             room = rooms[previous_room]
-            action, target = parse_command(command, room, game_state.inventory)
+            action, target = parse_command(command, room, game_state.inventory, report=report)
 
+            if action:
+                report(f"[Procedural] Resolving {action.replace('_', ' ')}.")
+            else:
+                report("[Procedural] Using the unknown-command response.")
             if action == "move" and target:
                 result = game_state.move(target, rooms)
                 if game_state.current_room != previous_room:
@@ -138,6 +145,7 @@ def main():
             adaptation_ai.adjust_difficulty(profile, profile_summary)
             adaptation_ai.adapt_world(rooms, profile, profile_summary)
 
+            print(result)
             if game_state.current_room != previous_room:
                 room = rooms[game_state.current_room]
                 description = content_gen.generate_description(
@@ -146,9 +154,9 @@ def main():
                     description=room.prose(),
                     items=[item.name for item in room.items],
                     profile_summary=profile_summary,
+                    report=report,
                 )
-                result += "\n" + game_state.get_current_description(rooms, description=description)
-            print(result)
+                print(game_state.get_current_description(rooms, description=description))
 
     print("\nCongratulations! You have defeated the giant and won the game!")
 

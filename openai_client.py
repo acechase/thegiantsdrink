@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -8,7 +8,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "gpt-5.4-mini"
 
 
-def complete(system_prompt: str, user_prompt: str, *, max_tokens: int, json_output: bool = False) -> Optional[str]:
+def complete(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    max_tokens: int,
+    json_output: bool = False,
+    purpose: str = "text generation",
+    report: Optional[Callable[[str], None]] = None,
+) -> Optional[str]:
     """Request a text completion from OpenAI, returning None if it is unavailable."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -32,6 +40,8 @@ def complete(system_prompt: str, user_prompt: str, *, max_tokens: int, json_outp
     if json_output:
         payload["response_format"] = {"type": "json_object"}
 
+    if report is not None:
+        report(f"[AI] Calling {model} for {purpose}...")
     try:
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",

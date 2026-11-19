@@ -62,7 +62,7 @@ def _direct_command(command, objects):
     return None
 
 
-def parse_command(command, room=None, inventory=()):
+def parse_command(command, room=None, inventory=(), *, report=None):
     """Resolve ordinary verbs locally and ask OpenAI about free-form commands.
 
     Model interpretations can depend on the room, visible objects and held tools.
@@ -86,8 +86,12 @@ def parse_command(command, room=None, inventory=()):
         context = "\nCurrent scene: " + json.dumps(scene)
     cache_key = (command, context)
     if cache_key in command_cache:
+        if report is not None:
+            report("[Cached AI] Reusing command interpretation.")
         return command_cache[cache_key]
-    generated = complete(SYSTEM_PROMPT + context, command, max_tokens=100, json_output=True)
+    generated = complete(
+        SYSTEM_PROMPT + context, command, max_tokens=100, json_output=True, purpose="command interpretation", report=report
+    )
     if not generated:
         return None, None
     action, target = extract_action_target(generated)
