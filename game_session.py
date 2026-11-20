@@ -7,7 +7,7 @@ from adaptation_ai import AdaptationAI
 from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
 from content_generator import ContentGenerator
-from game_world import find_object, noun, world_map
+from game_world import find_among, noun, world_map
 from room_companion import Portrait, Scene
 from saga import CASTLE_HORIZON, Saga
 from simulation_engine import GameState
@@ -217,8 +217,9 @@ class GameSession:
             result = game.drop_item(target, rooms)
         elif action == "use" and target:
             difficulty = self.adaptation.get_difficulty()
-            if find_object(target, game.inventory):
-                result = game.use_item(target, difficulty, world_map=rooms, command=command, report=report)
+            held = find_among(target, game.inventory, room.items, room.scenery)
+            if held in game.inventory:
+                result = game.use_item(held.name, difficulty, world_map=rooms, command=command, report=report)
             else:
                 result = game.investigate(target, rooms, command, report=report)
             self.behavior.update_profile("use")

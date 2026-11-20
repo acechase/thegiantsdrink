@@ -1102,3 +1102,55 @@ def test_items_described_in_room_prose_move_to_their_own_sentence():
     assert rooms["Chiming Grove"].description == "Glass trees crowd close. A path leads east."
     assert rooms["Chiming Grove"].items[0].room_text == "A silver bell hangs from a low branch."
     assert rooms["Chiming Grove"].prose().count("silver bell") == 1
+
+
+# ── Naming things that share words ───────────────────────────────────
+
+
+def test_a_modifier_alone_never_names_a_different_thing():
+    from game_world import Item, find_among, find_object
+
+    chip, bell, sword = Item("chip of marble", "A chip."), Item("glass bell", "A bell."), Item("rusty sword", "A blade.")
+    frames, marble = Item("empty picture frames", "Frames."), Item("marble", "A marble.")
+    assert find_object("marble", [chip]) is None and find_object("glass", [bell]) is None
+    assert find_object("chip", [chip]) is chip and find_object("the bell", [bell]) is bell
+    assert find_object("sword", [sword]) is sword and find_object("picture frames", [frames]) is frames
+    assert find_among("marble", [], [chip], [marble]) is marble  # An exact name anywhere beats the carried chip.
+    assert find_among("bell", [Item("brass bell", "B.")], [bell]) .name == "brass bell"  # Nearer group wins a tie.
+
+
+@pytest.fixture
+def gallery():
+    from game_world import Item, Room
+
+    room = Room("Weather Gallery", "A long gallery holds a row of empty picture frames. A marble rolls down the "
+                "floor and stops beside your foot.", exits={"west": "Rain Landing"},
+                scenery=(Item("empty picture frames", "Each frame clouds over as you approach."),
+                         Item("marble", "A glass marble with a tiny blue river inside.")))
+    game = GameState()
+    game.current_room = room.name
+    game.inventory = [Item("chip of marble", "A white chip."), Item("glass bell", "A clear bell."),
+                      Item("rusty sword", "Rust freckles the blade.")]
+    return game, {room.name: room}
+
+
+def test_taking_the_rolled_marble_does_not_grab_the_carried_chip(openai_api, gallery):
+    game, rooms = gallery
+    take = adjudication(effect="take", anchor="marble", reply="You pick up the marble.",
+                        room_after="A long gallery holds a row of empty picture frames.", description="A glass marble.")
+    openai_api.post(OPENAI_URL, json=take)
+    assert game.take_item("marble", rooms, command="take marble") == "You pick up the marble."
+    assert sent_scene(openai_api)["subject"] == "marble"
+    game.drop_item("chip", rooms)
+    game.drop_item("marble", rooms)
+    assert game.take_item("marble", rooms, command="take marble") == "You take the marble."
+    assert [item.name for item in rooms["Weather Gallery"].items] == ["chip of marble"]
+
+
+def test_the_glass_in_a_frame_is_not_the_carried_glass_bell(openai_api, gallery):
+    game, rooms = gallery
+    openai_api.post(OPENAI_URL, json=adjudication(effect="observe", anchor="empty picture frames",
+                                                  reply="The blade sinks into the clouding inside the frame like fog."))
+    result = game.use_on("rusty sword", "glass", rooms, command="break the glass of one of the paintings using your sword")
+    assert result == "The blade sinks into the clouding inside the frame like fog."
+    assert sent_scene(openai_api)["subject"] == "glass" and sent_scene(openai_api)["held_tool"] == "rusty sword"

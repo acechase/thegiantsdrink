@@ -2,7 +2,7 @@
 import re
 
 from environment_actions import resolve_environment
-from game_world import find_object, noun
+from game_world import find_among, find_object, noun
 from trials import FallingStairs, GiantTable
 
 
@@ -129,7 +129,8 @@ class GameState:
         str: Success message or error message if item not found.
         """
         room = world_map[self.current_room]
-        item = find_object(item_name, room.items)
+        found = find_among(item_name, room.items, self.inventory, room.scenery)
+        item = found if found in room.items else None
         if item:
             self.inventory.append(item)
             room.items.remove(item)
@@ -137,7 +138,7 @@ class GameState:
             if item not in room.departed:
                 room.departed.append(item)
             return f"You take the {item.name}."
-        held = find_object(item_name, self.inventory)
+        held = found if found in self.inventory else None
         if held and self._taking_off(held, command):
             return self._take_off(held)
         if held:
