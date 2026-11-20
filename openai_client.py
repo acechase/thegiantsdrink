@@ -4,6 +4,8 @@ from typing import Callable, Optional
 
 import requests
 
+from usage import record_text
+
 logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "gpt-5.4-mini"
 
@@ -51,7 +53,9 @@ def complete(
             timeout=(15, read_timeout or (180 if allow_reasoning else 15)),
         )
         response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        body = response.json()
+        record_text(body.get("usage") if isinstance(body, dict) else None)
+        content = body["choices"][0]["message"]["content"]
     except requests.HTTPError as exc:
         logger.warning(
             "OpenAI request failed (HTTP %s). Check your key, model, reasoning effort and quota.", exc.response.status_code

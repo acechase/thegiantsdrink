@@ -83,8 +83,10 @@ def render(record, art_dir):
 
     life = record.get("life", 1) if isinstance(record.get("life"), int) else 1
     places = len(set(chapters))
+    tokens = (record.get("tokens") or {}).get("total") if isinstance(record.get("tokens"), dict) else None
     facts = [_started(record), f"{len(journal)} turns", f"{life - 1} {'death' if life == 2 else 'deaths'}",
-             f"{places} {'chapter' if places == 1 else 'chapters'}"]
+             f"{places} {'chapter' if places == 1 else 'chapters'}",
+             f"{tokens:,} AI tokens" if isinstance(tokens, int) and tokens else ""]
     lessons = [str(lesson) for lesson in record.get("lessons", []) if lesson]
     learned = ("<h2>What this player learned</h2><ul>" + "".join(f"<li>{escape(x)}</li>" for x in lessons) + "</ul>"
                if lessons else "")

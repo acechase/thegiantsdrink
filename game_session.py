@@ -12,6 +12,7 @@ from room_companion import Portrait, Scene
 from saga import CASTLE_HORIZON, Saga
 from simulation_engine import GameState
 from trials import GiantTable
+from usage import Meter, metering
 
 HELP_TEXT = """Available commands:
   LOOK          - Look around the current room
@@ -59,6 +60,7 @@ class GameSession:
         self.saga = Saga()
         self.ended = False
         self.portrait = None  # Shown in place of the room illustration until the next turn.
+        self.meter = Meter()  # AI tokens this game has spent, kept with its saves.
         self.scene = Scene.from_room(self.room)
         self.description = self.scene.description
 
@@ -94,6 +96,10 @@ class GameSession:
 
     def turn(self, command, on_event=None):
         """Resolve one command, delivering each event live and returning the ordered transcript."""
+        with metering(self.meter):
+            return self._turn(command, on_event)
+
+    def _turn(self, command, on_event):
         command = command.strip()
         events = []
         if self.ended or not command:

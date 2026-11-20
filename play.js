@@ -125,6 +125,19 @@ function renderAvatar(avatar) {
   };
   next.src = avatar.image;
 }
+const compact = new Intl.NumberFormat(undefined, {notation: "compact", maximumFractionDigits: 1});
+const exact = new Intl.NumberFormat();
+function renderUsage(tokens) {
+  el("usage").hidden = !tokens;
+  if (!tokens) return;
+  text("usage", compact.format(tokens.total) + " AI tokens this game");
+  const count = (n, one, many) => exact.format(n) + " " + (n === 1 ? one : many);
+  const detail = "Text: " + exact.format(tokens.text_in) + " in, " + exact.format(tokens.text_out) + " out (" +
+    exact.format(tokens.reasoning) + " reasoning) across " + count(tokens.text_calls, "request", "requests") +
+    ". Illustrations: " + count(tokens.image, "token", "tokens") + " across " + count(tokens.images, "painting", "paintings") +
+    ". Cached narration and art cost nothing.";
+  if (el("usage").title !== detail) el("usage").title = detail;
+}
 function renderSave(save) {
   el("saved").classList.toggle("failed", Boolean(save?.error));
   text("saved", !save ? "" : save.error ||
@@ -307,6 +320,7 @@ async function poll() {
     renderArt(state.art);
     renderAvatar(state.avatar);
     renderSave(state.save);
+    renderUsage(state.tokens);
     renderEntry(state.pending || state.latest);
     controls();
     if (outbox) await deliver();

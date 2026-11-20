@@ -15,6 +15,8 @@ from tempfile import NamedTemporaryFile
 
 import requests
 
+from usage import metering, record_image
+
 HERE = Path(__file__).resolve().parent
 DEFAULT_IMAGE_MODEL = "gpt-image-2.6-flare"
 STYLE = (
@@ -163,7 +165,9 @@ def generate_image(payload):
             timeout=(15, 240),
         )
         response.raise_for_status()
-        data = base64.b64decode(response.json()["data"][0]["b64_json"], validate=True)
+        body = response.json()
+        record_image(body.get("usage") if isinstance(body, dict) else None)
+        data = base64.b64decode(body["data"][0]["b64_json"], validate=True)
         if not data.startswith(b"\xff\xd8\xff") or not data.endswith(b"\xff\xd9"):
             raise ValueError("Invalid JPEG")
         return data
@@ -186,10 +190,11 @@ def generate_image(payload):
 class RoomCompanion:
     """Render one scene at a time, keeping only the latest waiting scene."""
 
-    def __init__(self, cache_dir, model):
-        """Prepare a disk cache and start an idle image worker."""
+    def __init__(self, cache_dir, model, *, meter=None):
+        """Prepare a disk cache and start an idle image worker that bills paintings to a game's meter."""
         self.cache_dir = Path(cache_dir)
         self.model = model
+        self.meter = meter
         self._condition = threading.Condition()
         self._closed = False
         self._scene = None
@@ -296,7 +301,9 @@ class RoomCompanion:
             status, error = "ready", ""
             try:
                 self.cache_dir.mkdir(parents=True, exist_ok=True)
-                self._save(key, generate_image(payload))
+                with metering(self.meter):
+                    image = generate_image(payload)
+                self._save(key, image)
             except RuntimeError as exc:
                 status, error = "error", str(exc)
             except OSError:
@@ -375,7 +382,7 @@ def launch_tab(url):
 
 
 @contextmanager
-def open_companion():
+def open_companion(meter=None):
     """Launch a local viewer and release its server when the game ends."""
     try:
         page = (HERE / "room_view.html").read_bytes()
@@ -388,7 +395,7 @@ def open_companion():
         try:
             cache_dir = HERE / ".room-art"
             cache_dir.mkdir(parents=True, exist_ok=True)
-            viewer = RoomCompanion(cache_dir, os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL)
+            viewer = RoomCompanion(cache_dir, os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL, meter=meter)
         except OSError:
             print("[Companion] The image cache could not be opened. Continuing in the terminal.", flush=True)
             yield None

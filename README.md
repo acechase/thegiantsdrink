@@ -56,7 +56,7 @@ Play in a browser with the room illustration, story, and command input on one pa
 ./.venv/bin/python main.py --browser
 ```
 
-The game opens a tab and prints its local address. Click a detail to examine it, click an exit to move, or type an action in your own words. The Trail row lists your last four moves. Inventory shows what you carry and marks what you have on. The journal keeps your commands, outcomes, and chapter arrivals. You can draft your next action while a turn is running.
+The game opens a tab and prints its local address. Click a detail to examine it, click an exit to move, or type an action in your own words. The Trail row lists your last four moves. A small counter under the input shows how many AI tokens the current game has used, live; hover over it for text, reasoning and illustration totals. Cached narration and illustrations cost nothing, and the total is kept in the game's save, listed by `--saves` and shown in its playthrough. Inventory shows what you carry and marks what you have on. The journal keeps your commands, outcomes, and chapter arrivals. You can draft your next action while a turn is running.
 
 Refresh or reopen the printed address to rejoin the same game. All tabs at that address share one player. Typing `quit` ends play and leaves the journal available. Press Ctrl+C in the launching terminal to stop the server. Every turn is saved, so you can stop at any time and resume later (see [Saving and sharing](#saving-and-sharing)).
 

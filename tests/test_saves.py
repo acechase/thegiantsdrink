@@ -119,6 +119,7 @@ def test_terminal_games_autosave_resume_list_and_export(openai_api, tmp_path):  
     first = run(["take candle", "take sword"])
     (slot,) = SaveSlot.all(tmp_path / "saves")
     assert f"Autosaving as {slot.ident}" in first and slot.record()["turns"] == 2
+    assert "This game has used 0 AI tokens: 0 for text and 0 for 0 illustrations." in first
     second = run(["inventory"], resume=True)
     assert f"Resuming {slot.ident} after turn 2" in second and "Inventory: candle, rusty sword" in second
     assert [e["turn"] for e in slot.record()["journal"]] == [1, 2, 3]

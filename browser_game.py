@@ -75,6 +75,7 @@ class BrowserGame:
                 "turn": len(self.journal), "room": self.room, "art": self.viewer.snapshot(),
                 "latest": self.journal[-1] if self.journal else None, "pending": self.pending,
                 "save": self.saved, "avatar": self.avatar.snapshot() if self.avatar else None,
+                "tokens": self.session.meter.snapshot(),
             }
 
     def _dress(self, session):
@@ -84,7 +85,8 @@ class BrowserGame:
     def playthrough(self):
         """Render every turn so far as a shareable page."""
         with self.condition:
-            record = {"journal": list(self.journal), "lessons": self.room["lessons"], "life": self.room["life"]}
+            record = {"journal": list(self.journal), "lessons": self.room["lessons"], "life": self.room["life"],
+                      "tokens": self.session.meter.snapshot()}
         if self.store:
             record["started"] = self.store.record().get("started", "")
         return render(record, self.viewer.cache_dir)
@@ -157,13 +159,16 @@ class BrowserGame:
             self.condition.notify_all()
 
     def close(self):
-        """Detach the server immediately even if a model call is finishing."""
+        """Detach the server immediately even if a model call is finishing, saving the last committed turn."""
         with self.condition:
             self.closed = True
+            session, journal = self.session, list(self.journal)
             self.condition.notify_all()
         self.viewer.close()
         if self.avatar:
             self.avatar.close()
+        if journal:
+            self._save(session, journal)  # Keep tokens spent on paintings that finished after the last turn.
 
 
 class PlayHandler(ViewerHandler):
@@ -225,8 +230,8 @@ def play_server(session, cache_dir, model, *, journal=None, store=None):
     assets = {"/play.js": ("text/javascript; charset=utf-8", (HERE / "play.js").read_bytes()),
               "/play.css": ("text/css; charset=utf-8", (HERE / "play.css").read_bytes())}
     with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
-        server.viewer = RoomCompanion(cache_dir, model)
-        server.avatar = RoomCompanion(cache_dir, model)
+        server.viewer = RoomCompanion(cache_dir, model, meter=session.meter)
+        server.avatar = RoomCompanion(cache_dir, model, meter=session.meter)
         server.game = BrowserGame(session, server.viewer, avatar=server.avatar, journal=journal, store=store)
         server.page, server.assets = page, assets
         try:

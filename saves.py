@@ -126,16 +126,16 @@ class SaveSlot:
         snapshot = pickle.dumps({"format": FORMAT, "session": session, "journal": journal},
                                 protocol=pickle.HIGHEST_PROTOCOL)
         _write(self.path / "state.bin", _sign(_key(self.root, create=True), snapshot) + snapshot)
-        self.write_record(session.public_state(), journal)
+        self.write_record(session.public_state(), journal, tokens=session.meter.snapshot())
 
-    def write_record(self, room, journal):
-        """Write game.json from a public room state and the journal."""
+    def write_record(self, room, journal, *, tokens=None):
+        """Write game.json from a public room state, the journal and the game's token totals."""
         previous = self.record()
         now = datetime.now().isoformat(timespec="seconds")
         record = {
             "format": FORMAT, "id": self.ident, "started": previous.get("started", now), "updated": now,
             "turns": len(journal), "place": room["name"], "chapter": room["chapter"], "life": room["life"],
-            "lessons": room["lessons"], "wearing": room.get("worn", []), "journal": journal,
+            "lessons": room["lessons"], "wearing": room.get("worn", []), "tokens": tokens, "journal": journal,
         }
         self.path.mkdir(parents=True, exist_ok=True)
         _write(self.path / "game.json", json.dumps(record, ensure_ascii=False, indent=1).encode("utf-8"))
@@ -165,5 +165,7 @@ class SaveSlot:
         """Describe the save in one line for --saves."""
         record = self.record()
         state = "" if (self.path / "state.bin").is_file() else "  (view only)"
+        tokens = (record.get("tokens") or {}).get("total")
+        spent = f", {tokens:,} AI tokens" if isinstance(tokens, int) and tokens else ""
         return (f"{self.ident}  {record.get('turns', 0)} turns, life {record.get('life', 1)}, "
-                f"{record.get('place', '?')} in {record.get('chapter', '?')}{state}")
+                f"{record.get('place', '?')} in {record.get('chapter', '?')}{spent}{state}")

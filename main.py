@@ -74,8 +74,12 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
     if browser:
         play_in_browser(session, journal=journal, store=slot)
         return
-    with open_companion() if visuals else nullcontext(None) as viewer:
+    with open_companion(session.meter) if visuals else nullcontext(None) as viewer:
         _play(viewer, session, journal, slot)
+    tokens = session.meter.snapshot()
+    paintings = "illustration" if tokens["images"] == 1 else "illustrations"
+    print(f"This game has used {tokens['total']:,} AI tokens: {tokens['text']:,} for text and "
+          f"{tokens['image']:,} for {tokens['images']} {paintings}.")
 
 
 def _archive(root, url):
