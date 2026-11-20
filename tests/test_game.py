@@ -118,6 +118,9 @@ class TestItemUse:
         assert game.book_knowledge is True
 
     def test_use_key_in_antechamber(self, game, wmap):
+        from saga import Saga
+
+        Saga().begin(wmap, "You passed through the silver.")
         game.current_room = "Giant's Hall"
         game.take_item("key", wmap)
         game.current_room = "Throne Antechamber"
@@ -125,6 +128,9 @@ class TestItemUse:
         assert game.door_unlocked is True
 
     def test_use_key_wrong_room(self, game, wmap):
+        from saga import Saga
+
+        Saga().begin(wmap, "You passed through the silver.")
         game.current_room = "Giant's Hall"
         game.take_item("key", wmap)
         game.current_room = "Library"
@@ -140,60 +146,26 @@ class TestItemUse:
 
 
 class TestCombat:
-    def test_attack_giant_with_sword_normal_difficulty(self, game, wmap):
+    @pytest.mark.parametrize("difficulty,potion,book", [(0.5, False, False), (1.0, False, False),
+                                                      (1.5, False, False), (1.5, True, False), (1.0, True, True)])
+    def test_direct_attack_costs_a_life_even_with_equipment(self, game, wmap, difficulty, potion, book):
         game.take_item("rusty sword", wmap)
         game.current_room = "Giant's Hall"
-        game.attack("giant", difficulty=1.0)
-        assert game.giant_defeated is True
+        game.potion_active, game.book_knowledge = potion, book
+        assert "You die." in game.attack("giant", difficulty, world_map=wmap)
+        assert not game.giant_defeated and game.deaths == 1 and not game.potion_active
+        assert game.book_knowledge == book and game.inventory[0].name == "rusty sword"
 
-    def test_attack_giant_without_sword(self, game, wmap):
-        game.current_room = "Giant's Hall"
-        result = game.attack("giant", difficulty=1.0)
-        assert game.giant_defeated is False
-        assert "fail" in result.lower()
+    def test_attack_nothing(self, game):
+        assert "nothing to attack" in game.attack("giant").lower()
+        assert game.deaths == 0
 
-    def test_attack_giant_high_difficulty_no_potion(self, game, wmap):
-        game.take_item("rusty sword", wmap)
-        game.current_room = "Giant's Hall"
-        result = game.attack("giant", difficulty=1.5)
-        assert game.giant_defeated is False
-        assert "potion" in result.lower()
-
-    def test_attack_giant_high_difficulty_with_potion(self, game, wmap):
-        game.take_item("rusty sword", wmap)
-        game.current_room = "Giant's Hall"
-        game.potion_active = True
-        game.attack("giant", difficulty=1.5)
-        assert game.giant_defeated is True
-
-    def test_attack_giant_low_difficulty(self, game, wmap):
-        game.take_item("rusty sword", wmap)
-        game.current_room = "Giant's Hall"
-        game.attack("giant", difficulty=0.5)
-        assert game.giant_defeated is True
-
-    def test_attack_nothing(self, game, wmap):
-        result = game.attack("giant", difficulty=1.0)
-        assert "nothing to attack" in result.lower()
-
-    def test_crystal_vial_defeats_giant(self, game, wmap):
+    def test_crystal_vial_offers_a_clue(self, game, wmap):
         game.current_room = "Hidden Study"
         game.take_item("crystal vial", wmap)
         game.current_room = "Giant's Hall"
-        game.use_item("crystal vial")
-        assert game.giant_defeated is True
-
-    def test_strategist_path(self, game, wmap):
-        game.take_item("rusty sword", wmap)
-        game.current_room = "Library"
-        game.take_item("ancient book", wmap)
-        game.use_item("book")
-        game.current_room = "Treasure Room"
-        game.take_item("magic potion", wmap)
-        game.use_item("potion")
-        game.current_room = "Giant's Hall"
-        game.attack("giant", difficulty=1.0)
-        assert game.giant_defeated is True
+        assert "upside down" in game.use_item("crystal vial")
+        assert not game.giant_defeated and game.inventory[0].name == "crystal vial"
 
 
 # ── Behavior Analyzer ──────────────────────────────────────────────
@@ -617,7 +589,7 @@ class TestEndToEnd:
             "use potion",
             "go west",
             "go north again",
-            "go up",
+            "follow the banister",
             "head north",
             "attack giant",
             "hit giant",
@@ -644,7 +616,9 @@ class TestEndToEnd:
             ("attack", "giant"),
         ]
         output = _run_game(openai_api, inputs, cmds)
-        assert "defeated" in output.lower() or "giant falls" in output.lower()
+        assert "Life 2. You wake at the Giant's Hall." in output
+        assert "Life 3. You wake at the Upper Landing." in output
+        assert "bargain is broken" not in output
 
     def test_strategist_path(self, openai_api):
         """Take sword → read book → use potion → attack giant."""
@@ -660,7 +634,7 @@ class TestEndToEnd:
             "use potion",
             "walk west",
             "walk north",
-            "go up",
+            "follow the banister",
             "head north",
             "attack giant",
         ]
@@ -681,7 +655,8 @@ class TestEndToEnd:
             ("attack", "giant"),
         ]
         output = _run_game(openai_api, inputs, cmds)
-        assert "defeated" in output.lower() or "topples" in output.lower()
+        assert "woodcut" in output and "You die." in output
+        assert "bargain is broken" not in output
 
     def test_explorer_path(self, openai_api):
         """Navigate to Hidden Study → take crystal vial → use crystal vial in Giant's Hall."""
@@ -691,7 +666,7 @@ class TestEndToEnd:
             "head north",
             "go east",
             "head east",
-            "go up",
+            "follow the banister",
             "walk west",
             "walk north",
             "take crystal vial",
@@ -716,11 +691,12 @@ class TestEndToEnd:
             ("use", "crystal vial"),
         ]
         output = _run_game(openai_api, inputs, cmds)
-        assert "crumbles" in output.lower() or "defeated" in output.lower()
+        assert "In the crystal vial the cups appear upside down" in output
+        assert "bargain is broken" not in output
 
     def test_attack_without_sword(self, openai_api):
         """Attack giant without sword → giant_defeated stays False."""
-        inputs = ["go north", "head north", "go up", "walk north", "attack giant", "quit"]
+        inputs = ["go north", "head north", "follow the banister", "walk north", "attack giant", "quit"]
         cmds = [
             ("move", "north"),
             ("move", "north"),
@@ -730,8 +706,8 @@ class TestEndToEnd:
             ("quit", "game"),
         ]
         output = _run_game(openai_api, inputs, cmds)
-        assert "fail" in output.lower() or "without a weapon" in output.lower()
-        assert "congratulations" not in output.lower()
+        assert "Life 2. You wake at the Giant's Hall." in output
+        assert "bargain is broken" not in output
 
     def test_quit(self, openai_api):
         """Quit command exits cleanly."""
@@ -851,10 +827,10 @@ class TestEnvironment:
         assert game.take_item("sword", wmap) == "You take the rusty sword."
 
     def test_attack_accepts_a_described_giant(self, openai_api):
-        inputs = ["take sword", "go north", "go north", "go up", "go north", "swing at the sleeping giant"]
+        inputs = ["take sword", "go north", "go north", "follow the banister", "go north", "swing at the sleeping giant"]
         replies = [None] * 5 + [("attack", "the sleeping giant")]
         output = _run_game(openai_api, inputs, replies)
-        assert "congratulations" in output.lower()
+        assert "Life 2. You wake at the Giant's Hall." in output
 
 
 # ── Room companion ───────────────────────────────────────────────────
@@ -930,7 +906,7 @@ def test_described_use_of_a_plain_item_is_judged(openai_api, game, wmap):
 
 # ── Endless arcs ─────────────────────────────────────────────────────
 
-TO_THE_GIANT = ["take sword", "go north", "go north", "go up", "go north", "attack giant"]
+TO_THE_GIANT = ["take sword", "go north", "go north", "follow the banister", "go north", "upend the tray", "enter reflection"]
 
 
 def _arc_world():
@@ -946,13 +922,13 @@ def _arc_world():
 
 class TestArcs:
     def test_play_continues_through_planned_arcs(self, openai_api):
-        inputs = [*TO_THE_GIANT, "go north", "go north", "take silver bell", "go east", "go north", "use silver bell",
-                  "go north", "go south"]
-        replies = [None] * 5 + [("attack", "giant")] + [None] * 8
+        inputs = [*TO_THE_GIANT, "go north", "go north", "take silver bell", "go east", "go north",
+                  "use silver bell on glass heron", "go north", "go south"]
+        replies = [None] * len(inputs)
         plans = [arc_plan(), arc_plan("Second ", horizon="Further still, a lighthouse shines darkness.")]
         output = _run_game(openai_api, inputs, replies, plans)
-        assert "Congratulations! You have defeated the giant." in output
-        assert "the game does not end here" in output and "A way north has opened." in output
+        assert "The giant’s bargain is broken." in output
+        assert "A way north has opened." in output
         assert "── Arc 1: The Glass Orchard ──" in output and "Glass trees chime" in output
         assert "A glass heron stands across the northern path and will not move." in output
         assert "The heron answers the bell's note and steps aside." in output
@@ -966,7 +942,7 @@ class TestArcs:
         assert [p["arc_number"] for p in planning] == [1, 2]
         assert planning[1]["horizon"] == "Beyond the pool, a stair of cloud climbs toward a dark lighthouse."
         assert planning[1]["chronicle"][-1].startswith("The Glass Orchard: The heron answers")
-        assert "use silver bell" in planning[1]["recent_commands"]
+        assert "use silver bell on glass heron" in planning[1]["recent_commands"]
         assert "[Cached AI] Using the planned room description." in output
 
     def test_plan_builds_a_connected_arc_behind_the_gate(self, openai_api):
@@ -1051,7 +1027,7 @@ class TestArcs:
                                                       reply="You mimic the wind; the heron tilts aside.",
                                                       room_after="The pool is still. The way north is open.",
                                                       description="The heron leans aside."))
-        assert game.move("north", rooms) == "A glass heron stands across the northern path and will not move."
+        assert game.move("north", rooms).startswith("A glass heron stands across the northern path and will not move.")
         result = game.investigate("glass heron", rooms, "whistle like the wind through glass leaves")
         assert result == "You mimic the wind; the heron tilts aside." and game.breakthrough is pool
         assert pool.prose() == "The pool is still. The way north is open."
@@ -1078,7 +1054,9 @@ class TestArcs:
     def test_defeated_giant_stays_defeated(self, game, wmap):
         game.inventory.append(wmap["Starting Room"].items[0])
         game.current_room = "Giant's Hall"
-        game.attack("giant")
+        table = wmap[game.current_room].trial
+        table.resolve("spill both", game, wmap)
+        table.resolve("enter reflection", game, wmap)
         assert game.attack("giant") == "The giant is gone. Only a drift of grey dust remains."
 
 

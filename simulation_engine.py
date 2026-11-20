@@ -1,6 +1,7 @@
 # simulation_engine.py
 from environment_actions import resolve_environment
 from game_world import find_object, noun
+from trials import FallingStairs, GiantTable
 
 
 class GameState:
@@ -28,7 +29,33 @@ class GameState:
         self.book_knowledge = False
         self.door_unlocked = False
         self.history = []
+        self.deaths = 0
+        self.table_deaths = 0
+        self.lessons = []
+        self.last_lesson = ""
         self.breakthrough = None  # A room whose obstacle the player has just overcome.
+
+    def die(self, cause, lesson, checkpoint):
+        """Start the next life at a checkpoint and keep the player's discoveries and possessions."""
+        self.deaths += 1
+        self.last_lesson = lesson
+        if lesson not in self.lessons:
+            self.lessons.append(lesson)
+        self.current_room = checkpoint
+        self.potion_active = False
+        return f"{cause} You die."
+
+    def table_death(self, world_map, cause, lesson):
+        """Refill the glasses and send repeated failures farther back into the castle."""
+        if world_map is not None:
+            hall = world_map["Giant's Hall"]
+            if isinstance(hall.trial, GiantTable):
+                hall.trial.spilled.clear()
+                hall.seen_details.clear()
+        checkpoints = ("Giant's Hall", "Upper Landing", "Great Staircase", "Starting Room")
+        checkpoint = checkpoints[min(self.table_deaths, len(checkpoints) - 1)]
+        self.table_deaths += 1
+        return self.die(cause, lesson, checkpoint)
 
     def move(self, direction, world_map):
         """Move the player in a given direction if the exit exists.
@@ -41,7 +68,18 @@ class GameState:
         room = world_map[self.current_room]
         challenge = room.challenge
         if challenge and not challenge.resolved and direction == challenge.blocks:
-            return challenge.barrier
+            if not challenge.warned:
+                challenge.warned = True
+                return f"{challenge.barrier} {challenge.warning}"
+            return self.die(f"{challenge.barrier} You step past your shadow and the world closes over you.",
+                            f"At {room.name}, I must change the {challenge.obstacle} before going {direction}.",
+                            challenge.checkpoint or room.name)
+        if isinstance(room.trial, FallingStairs) and direction == "up" and not room.trial.mastered:
+            if self.potion_active:
+                self.potion_active = False
+                return "The stair drops. The potion gives you one last grip on the outer rail before its strength fades."
+            return self.die("The marble under your feet becomes a white waterfall. You fall with it.",
+                            "On the Great Staircase, the outer edge beside the banister held.", room.name)
         if direction in room.exits:
             target_room = room.exits[direction]
             # Victory Chamber requires unlocked door
@@ -148,7 +186,7 @@ class GameState:
             room.exits[passage.direction] = passage.destination
             return passage.reveal
         if target.name == "giant" and tool.name == "rusty sword":
-            return self.attack("giant", difficulty)
+            return self.attack("giant", difficulty, world_map=world_map)
         if (tool.name, target.name) in {("key", "iron door"), ("crystal vial", "giant")}:
             return self.use_item(tool.name, difficulty)
         return self.investigate(target.name, world_map, command, tool=tool, report=report)
@@ -177,7 +215,7 @@ class GameState:
             room = world_map[self.current_room]
             challenge, _ = self.active_challenge(room)
             if challenge and challenge.outcome(item.name):
-                return self.overcome(room, challenge.outcome(item.name))
+                return f"You hold the {item.name}. What will you use it on?"
         if item.name == "rusty sword":
             prompt = "You're holding the rusty sword. What would you like to use it on?"
             return self._improvise(item, prompt, world_map, command, report)
@@ -191,9 +229,8 @@ class GameState:
             elif "book" in item.name.lower():
                 self.book_knowledge = True
                 return (
-                    "You read the ancient book and learn that the giant fears "
-                    "his own drink turned against him. A crystal vial of his "
-                    "draft may be hidden somewhere in the castle..."
+                    "You read the ancient book. In one woodcut both cups lie on their sides. The engraver has cut "
+                    "a hole straight through the silver at the giant's feet. The next page shows an empty chair."
                 )
             elif "key" in item.name.lower():
                 if self.current_room in ("Throne Antechamber", "Giant's Hall"):
@@ -201,14 +238,9 @@ class GameState:
                     return "You use the key — the iron door clicks open!"
                 return "There is nothing to unlock here."
             elif "crystal vial" in item.name.lower():
-                if self.current_room == "Giant's Hall":
-                    self.inventory.remove(item)
-                    self.giant_defeated = True
-                    return (
-                        "You hurl the crystal vial at the giant. The luminous "
-                        "liquid splashes across him and he shrieks — his own "
-                        "strength turned against him! The giant crumbles to dust."
-                    )
+                if self.current_room == "Giant's Hall" and not self.giant_defeated:
+                    return ("In the crystal vial the cups appear upside down. Between their rims a tiny door opens. "
+                            "When you lower the vial the giant is still waiting.")
                 return "There is no one here to use this on."
             elif "shield" in item.name.lower():
                 return "You raise the silver shield. It might protect you in battle."
@@ -218,61 +250,14 @@ class GameState:
                 return "You put on the iron helm. You feel tougher."
         return self._improvise(item, f"What would you like to use the {item.name} on?", world_map, command, report)
 
-    def attack(self, target, difficulty=1.0):
-        """Attack a target using equipped weapons, potentially defeating the giant.
-
-        Implements three victory paths:
-        - Aggressor: Sword + potion at high difficulty.
-        - Strategist: Sword + book knowledge + potion.
-        - Explorer: Crystal vial weapon (instant victory).
-
-            target (str): Name of the target to attack (e.g., "giant").
-            difficulty (float, optional): Current game difficulty multiplier. Defaults to 1.0.
-
-            str: Combat result message or resource requirement message.
-        """
-        if self.giant_defeated and "giant" in target.lower():
+    def attack(self, target, difficulty=1.0, *, world_map=None):
+        """Resolve a direct confrontation with the keeper of the table."""
+        if "giant" not in noun(target).split() or self.current_room != "Giant's Hall":
+            return "There is nothing to attack here."
+        if self.giant_defeated:
             return "The giant is gone. Only a drift of grey dust remains."
-        if self.current_room == "Giant's Hall" and "giant" in target.lower():
-            has_sword = any("rusty sword" in item.name for item in self.inventory)
-
-            if not has_sword:
-                return "You try to attack the giant but fail without a weapon."
-
-            # ── Aggressor path ──
-            # High difficulty: giant requires potion before sword succeeds
-            if difficulty > 1.2:
-                if self.potion_active:
-                    self.giant_defeated = True
-                    return (
-                        "Empowered by the potion, you strike the giant with the "
-                        "rusty sword. The blow lands true — the giant falls!"
-                    )
-                return (
-                    "You swing the rusty sword at the giant, but he is too "
-                    "powerful. Perhaps a potion could give you the edge you need."
-                )
-
-            # ── Strategist path ──
-            # Book knowledge + potion = guaranteed success at any difficulty
-            if self.book_knowledge and self.potion_active:
-                self.giant_defeated = True
-                return (
-                    "Armed with knowledge from the ancient book and empowered by "
-                    "the magic potion, you strike the giant's weakness. He topples "
-                    "like a felled oak!"
-                )
-
-            # Low difficulty: direct attack succeeds without potion
-            if difficulty < 0.9:
-                self.giant_defeated = True
-                return "The giant is sluggish and slow. You strike with the rusty sword and defeat him with ease!"
-
-            # Normal difficulty: sword alone works
-            self.giant_defeated = True
-            return "You attack the giant with the rusty sword and defeat him!"
-
-        return "There is nothing to attack here."
+        return self.table_death(world_map, "The giant folds the table like a book. You vanish between its pages.",
+                                "He can close the table on me. When a cup tips, he reaches to set it straight.")
 
     def get_current_description(self, world_map, *, description=None):
         """Get a full description of the current room including items and exits.
@@ -285,6 +270,5 @@ class GameState:
         description = description or room.prose()
         if room.items:
             description += " You see: " + ", ".join([item.name for item in room.items])
-        exits = ", ".join(room.exits.keys())
-        description += f"\nExits: {exits}"
+        description += f"\nExits: {', '.join(room.visible_exits)}"
         return description

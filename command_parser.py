@@ -15,7 +15,7 @@ class ToolUse(NamedTuple):
 
 
 SYSTEM_PROMPT = """Interpret one player's command for a castle exploration game. Return only a JSON object.
-Actions: move, take, drop, use, use_on, examine, search, interact, attack, check, look, help, quit, unknown.
+Actions: move, take, drop, use, use_on, examine, search, interact, attack, check, look, help, quit, trial, unknown.
 Use "look" with target "around" only for the whole room. Looking at, inspecting or examining an object is "examine".
 For "take", "use", "examine", or "attack", target is the object name. For "check", target is "inventory".
 For "move", target is north, south, east, west, up or down. For "help" and "quit", use "commands" and "game".
@@ -27,6 +27,9 @@ Use "search" for a deliberate search of a named object, "drop" to set down a car
 Use "interact" with the subject as target for other intentional acts such as turning, pulling, bending or humming at something.
 Interpret misspellings. Use the supplied scene to resolve references, including details in prose.
 Reserve "attack" for an adversary. Keep missing objects as requested. Never invent a successful outcome.
+If the scene supplies trial_intents, use action "trial" and the matching exact key only when the player actually
+attempts that action. Questions, inspecting a cup, hypothetical actions, negations and tool experiments are never
+consent to drink. If the player declines to drink and performs another action, interpret the action they perform.
 If you cannot identify an action, return {"action":"unknown","target":""}."""
 
 command_cache = {}
@@ -34,6 +37,8 @@ SIMPLE_COMMANDS = {
     "look": ("look", "around"),
     "look around": ("look", "around"),
     "look around the room": ("look", "around"),
+    "remember": ("remember", "lessons"),
+    "lessons": ("remember", "lessons"),
     "inventory": ("check", "inventory"),
     "help": ("help", "commands"),
     "quit": ("quit", "game"),
@@ -74,6 +79,12 @@ def parse_command(command, room=None, inventory=(), *, report=None):
     The simulation checks the resulting intent before it changes any game state.
     """
     objects = [*inventory, *room.items, *room.scenery] if room else list(inventory)
+    trial = room.trial if room else None
+    if trial:
+        intent = trial.interpret(" ".join(command.casefold().strip(" .!").split()))
+        if intent:
+            return "trial", intent
+
     direct = _direct_command(command, objects)
     if direct:
         return direct
@@ -83,11 +94,13 @@ def parse_command(command, room=None, inventory=(), *, report=None):
         scene = {
             "room": room.name,
             "description": room.visible_text(),
-            "exits": list(room.exits),
+            "exits": room.visible_exits,
             "items": [obj.name for obj in room.items],
             "scenery": [obj.name for obj in room.scenery],
             "carrying": [obj.name for obj in inventory],
         }
+        if trial:
+            scene["trial_intents"] = trial.intents
         context = "\nCurrent scene: " + json.dumps(scene)
     cache_key = (command, context)
     if cache_key in command_cache:
@@ -100,6 +113,8 @@ def parse_command(command, room=None, inventory=(), *, report=None):
     if not generated:
         return None, None
     action, target = extract_action_target(generated)
+    if action == "trial" and (not trial or target not in trial.intents):
+        return None, None
     if action and target:
         command_cache[cache_key] = (action, target)
     return action, target
@@ -129,7 +144,8 @@ def extract_action_target(text):
                     return action, ToolUse(noun(tool), noun(target))
                 return None, None
             valid_actions = {
-                "move", "take", "drop", "use", "attack", "check", "look", "examine", "search", "interact", "help", "quit"
+                "move", "take", "drop", "use", "attack", "check", "look", "examine", "search",
+                "interact", "help", "quit", "trial"
             }
             if isinstance(action, str) and action in valid_actions and isinstance(target, str) and target:
                 return action, target.strip()

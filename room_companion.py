@@ -42,7 +42,7 @@ class Scene:
     def from_room(cls, room):
         """Capture what a player can currently see."""
         items, scenery = tuple(i.name for i in room.items), tuple(i.name for i in room.scenery)
-        return cls(room.name, room.prose(), items, scenery, tuple(room.exits))
+        return cls(room.name, room.prose(), items, scenery, tuple(room.visible_exits))
 
     def request(self, model):
         """Build the image request used both for generation and cache identity."""
@@ -90,27 +90,34 @@ class RoomCompanion:
     def __init__(self, cache_dir, model):
         """Prepare a disk cache and start an idle image worker."""
         self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.model = model
         self._condition = threading.Condition()
         self._closed = False
         self._scene = None
+        self._description = ""
         self._key = self._active = None
         self._status = "waiting"
         self._error = ""
         self._worker = threading.Thread(target=self._work, name="room-illustrator", daemon=True)
         self._worker.start()
 
-    def show(self, room):
+    def show(self, room, *, description=None):
         """Publish a scene immediately, coalescing duplicate and superseded requests."""
         scene = Scene.from_room(room)
         with self._condition:
-            if scene == self._scene or self._closed:
+            if self._closed:
+                return
+            self._description = description or scene.description
+            if scene == self._scene:
                 return
             self._scene = scene
             self._key = hashlib.sha256(json.dumps(scene.request(self.model), sort_keys=True).encode()).hexdigest()
             self._error = ""
-            if self._file(self._key).is_file():
+            try:
+                cached = self._file(self._key).is_file()
+            except OSError:
+                cached = False
+            if cached:
                 self._status = "cached"
             elif self._key == self._active:
                 self._status = "generating"
@@ -126,10 +133,17 @@ class RoomCompanion:
                 return {"status": "waiting"}
             ready = self._status in ("ready", "cached")
             return {
-                "key": self._key, "name": scene.name, "description": scene.description,
-                "items": scene.items, "exits": scene.exits, "model": self.model,
+                "key": self._key, "name": scene.name, "description": self._description,
+                "items": scene.items, "scenery": scene.scenery, "exits": scene.exits, "model": self.model,
                 "status": self._status, "error": self._error, "image": f"/art/{self._key}.jpg" if ready else None,
             }
+
+    def image_unavailable(self, key):
+        """Offer a retry when the active illustration disappeared from disk."""
+        with self._condition:
+            if self._key == key and self._status in ("ready", "cached"):
+                self._status = "error"
+                self._error = "The cached illustration could not be read. Try illustrating the room again."
 
     def retry(self, key):
         """Retry a failed scene only if it is still on screen."""
@@ -175,6 +189,7 @@ class RoomCompanion:
                 payload = self._scene.request(self.model)
             status, error = "ready", ""
             try:
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
                 self._save(key, generate_image(payload))
             except RuntimeError as exc:
                 status, error = "error", str(exc)
@@ -215,16 +230,19 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 try:
                     data = (viewer.cache_dir / (state["key"] + ".jpg")).read_bytes()
                 except OSError:
+                    viewer.image_unavailable(state["key"])
                     self.send_error(404)
                     return
                 self._send(200, "image/jpeg", data)
             else:
                 self.send_error(404)
 
+    def _same_origin(self):
+        return self.headers.get("Origin") == f"http://127.0.0.1:{self.server.server_port}"
+
     def do_POST(self):
         """Accept retry clicks from this local viewer."""
-        origin = f"http://127.0.0.1:{self.server.server_port}"
-        if self.headers.get("Origin") != origin:
+        if not self._same_origin():
             self.send_error(403)
         elif self.path.startswith("/retry/") and self.server.viewer.retry(self.path.removeprefix("/retry/")):
             self._send(204, "text/plain", b"")
@@ -233,6 +251,14 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Keep browser polling out of the game's input prompt."""
+
+
+def launch_tab(url):
+    """Open the local URL when a default browser is available."""
+    try:
+        webbrowser.open_new_tab(url)
+    except (webbrowser.Error, OSError):
+        pass  # Headless players can use the printed URL.
 
 
 @contextmanager
@@ -247,7 +273,9 @@ def open_companion():
         return
     with server:
         try:
-            viewer = RoomCompanion(HERE / ".room-art", os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL)
+            cache_dir = HERE / ".room-art"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            viewer = RoomCompanion(cache_dir, os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL)
         except OSError:
             print("[Companion] The image cache could not be opened. Continuing in the terminal.", flush=True)
             yield None
@@ -257,10 +285,7 @@ def open_companion():
         try:
             url = f"http://127.0.0.1:{server.server_port}/"
             print(f"[Companion] Room view: {url}", flush=True)
-            try:
-                webbrowser.open_new_tab(url)
-            except (webbrowser.Error, OSError):
-                pass  # The printed URL also works when no default browser is available.
+            launch_tab(url)
             yield viewer
         finally:
             viewer.close()

@@ -37,6 +37,10 @@ def _field(data, key, limit=2000):
 def _engine_sentences(room):
     """Room text the engine appends itself: loose items and an opened hidden route."""
     sentences = [obj.room_text for obj in room.items if obj.room_text]
+    if room.trial:
+        sentences.append(room.trial.prose())
+    if room.challenge and room.challenge.warning:
+        sentences.append(room.challenge.warning)
     return [*sentences, room.passage.visible] if room.passage_open else sentences
 
 
@@ -78,6 +82,8 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
         return fallback
     # A synonym can resolve to quoted scenery, but an invented anchor cannot become loot.
     grounded = find_object(anchor, objects) or room.landmark(anchor)
+    if grounded and room.trial and grounded.name in room.trial.fixtures and effect != "observe":
+        return grounded.description
     if obstacle is not None and grounded is obstacle and effect in ("overcome", "take", "remove"):
         # The obstacle can be outwitted with any carried tool, but never carried off or erased.
         base = _field(data, "room_after")

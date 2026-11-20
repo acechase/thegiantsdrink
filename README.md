@@ -9,7 +9,7 @@ A text-based adventure game where you explore a castle, collect items, and face 
 
 - **Natural language commands** — type freely; an LLM parses your intent
 - **15 rooms** with rich, atmospheric descriptions inspired by Ender's Game's Mind Game
-- **3 paths to victory** — aggressor, strategist, or explorer
+- **Lives and checkpoints** — danger follows repeatable rules, and what you learn survives each death
 - **Endless arcs after the giant** — the world keeps growing, one AI-planned challenge arc at a time
 - **Adaptive difficulty** — the game watches how you play and adjusts the world accordingly
 - **Player profiling** — the behavior analyzer tracks your play style and tailors content
@@ -24,7 +24,7 @@ git clone https://github.com/acechase/thegiantsdrink.git
 cd thegiantsdrink
 
 # Create and activate a virtual environment
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate   # Linux/macOS
 # .venv\Scripts\activate    # Windows
 
@@ -41,7 +41,7 @@ Copy `.env.example` to `.env` next to `main.py`, then fill in `OPENAI_API_KEY` w
 | `OPENAI_API_KEY` | Required to play. Authenticates requests to the OpenAI API. |
 | `OPENAI_MODEL` | Optional. Defaults to `gpt-5.4-mini`. Choose a Chat Completions model that supports JSON output for command parsing. |
 | `OPENAI_REASONING_EFFORT` | Optional. Sets the reasoning effort for command parsing and room narration. Omit it to use the model's default. |
-| `OPENAI_IMAGE_MODEL` | Optional. The image model for the `--visuals` room companion. Defaults to `gpt-image-2.6-flare`. |
+| `OPENAI_IMAGE_MODEL` | Optional. The image model for browser play and the room companion. Defaults to `gpt-image-2.6-flare`. |
 
 For example, set `OPENAI_MODEL=gpt-6-luna` and `OPENAI_REASONING_EFFORT=low` in your `.env`, then restart the game. Luna accepts `none`, `low`, `medium` (default), `high`, `xhigh`, and `max`. [OpenAI model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna)
 
@@ -49,17 +49,19 @@ Common commands such as `examine the sword` and `take the candle` resolve immedi
 
 ## How to Run
 
-```bash
-python main.py
-```
-
-To see each room as you play, add `--visuals`:
+Play in a browser with the room illustration, story, and command input on one page.
 
 ```bash
-python main.py --visuals
+./.venv/bin/python main.py --browser
 ```
 
-The game prints a local address and opens it in your browser. The page shows an AI illustration of your current room, its items and exits. It redraws when the room changes, for example when you pick something up, open a passage, or alter the scenery. Each distinct scene is generated once and cached in `.room-art/`, so revisiting an unchanged room costs nothing. The page shows whether an illustration is queued, being generated, or loaded from the cache, and offers a retry if generation fails. The viewer only listens on `127.0.0.1`.
+The game opens a tab and prints its local address. Click a detail to examine it, click an exit to move, or type an action in your own words. Inventory shows what you carry. The journal keeps your commands, outcomes, and chapter arrivals. You can draft your next action while a turn is running.
+
+Refresh or reopen the printed address to rejoin the same game. All tabs at that address share one player. Typing `quit` ends play and leaves the journal available. Press Ctrl+C in the launching terminal to stop the server. Progress lasts for the lifetime of that Python process.
+
+On Windows use `.venv\Scripts\python.exe main.py --browser`. For terminal play on macOS or Linux, run `./.venv/bin/python main.py`. Add `--visuals` for a separate read-only room companion.
+
+Both browser modes listen on `127.0.0.1`. The game generates and caches illustrations in `.room-art/` for each distinct visible scene. Taking an item or opening a passage can trigger another image request. Revisiting a cached scene reuses its art. Browser play shows a sketch of the exits while an illustration is pending or unavailable. You can continue playing or retry a failed illustration.
 
 ## How to Play
 
@@ -78,9 +80,16 @@ Anything the game describes is something you can act on, whether it appears in t
 | `use <item>` | Use an item from your inventory |
 | `use <item> on <object>` | Try a carried tool on something here |
 | `attack <target>` | Attack something |
+| `remember` | Recall lessons from previous lives |
 | `inventory` | Check your inventory |
 | `help` | Show available commands |
 | `quit` / `exit` | Leave the game |
+
+## Lives and checkpoints
+
+The castle gives you time to look. Read the room, examine what seems out of place, and type what you want to try. A dangerous action can kill your character. A death tells you what happened and returns you to a checkpoint in the same game. You keep your possessions, discoveries, and learned routes. Temporary potion strength fades.
+
+Repeated deaths at the giant’s table send you progressively farther back through the castle. In later chapters, forcing an unresolved crossing after its warning can send you back to that chapter’s entrance. Type `remember` or open the browser journal to recall what previous lives taught you.
 
 ## After the giant
 
@@ -99,7 +108,7 @@ Planning an arc takes one longer request, around 40 seconds with `gpt-6-luna` at
 Install the development dependencies with `pip install -r requirements-dev.txt`. The tests simulate OpenAI responses and run without credentials.
 
 ```bash
-pytest tests/test_game.py -v
+pytest tests -v
 ```
 
 ## Local Development
@@ -112,7 +121,7 @@ pytest tests/test_game.py -v
 
 ```bash
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate   # Linux/macOS
 # .venv\Scripts\activate    # Windows
 
@@ -131,10 +140,10 @@ ruff format .
 ruff check --fix .
 
 # Run all tests
-pytest tests/test_game.py -v
+pytest tests -v
 
 # Run with coverage
-pytest tests/test_game.py --cov=. --cov-report=html
+pytest tests --cov=. --cov-report=html
 
 # Generate API documentation
 pdoc --serve simulation_engine behavior_analyzer adaptation_ai content_generator

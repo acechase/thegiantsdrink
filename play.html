@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Giant’s Drink</title>
+  <link rel="stylesheet" href="/play.css">
+  <script defer src="/play.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand"><span class="mark" aria-hidden="true"></span>The Giant’s Drink</div>
+    <nav aria-label="Player">
+      <button id="bag" aria-controls="drawer" aria-expanded="false">Inventory <span id="count"></span></button>
+      <button id="history" aria-controls="drawer" aria-expanded="false">Journal</button>
+    </nav>
+  </header>
+  <aside id="drawer" hidden aria-labelledby="drawer-title">
+    <div class="drawer-head"><h2 id="drawer-title"></h2><button id="close">Close</button></div>
+    <section id="memories" hidden><h3>What you remember</h3><ul id="lesson-list"></ul></section>
+    <div id="drawer-body"></div>
+    <button id="older" hidden>Earlier turns</button>
+  </aside>
+  <section class="spread" aria-labelledby="name">
+    <figure>
+      <div class="plate"><div id="sketch" aria-label="Room exits"><span aria-hidden="true">✧</span></div></div>
+      <figcaption><span id="art-status" role="status">Connecting…</span> <button id="retry" hidden>Retry illustration</button></figcaption>
+    </figure>
+    <article>
+      <p class="chapter" id="chapter"></p>
+      <h1 id="name">The castle</h1>
+      <p class="prose" id="prose"></p>
+      <div class="choice" id="object-row" hidden><span>Examine</span><div id="objects"></div></div>
+      <div class="choice" id="exit-row" hidden><span>Exits</span><div id="exits"></div></div>
+    </article>
+  </section>
+  <section class="action" aria-label="Play a turn">
+    <div id="latest" hidden>
+      <div class="byline"><strong id="last-command"></strong><span id="last-place"></span></div>
+      <div class="events" id="events"></div>
+    </div>
+    <p id="activity" role="status"></p>
+    <p id="notice" role="alert"></p>
+    <form id="form">
+      <label class="sr" for="command">Your next action</label>
+      <input id="command" placeholder="What do you do?" maxlength="2000" autocomplete="off" enterkeyhint="send">
+      <button id="act" type="submit" disabled>Act <span aria-hidden="true">↵</span></button>
+    </form>
+    <div id="suggestions"></div>
+    <div class="sr" role="status" id="announcement"></div>
+  </section>
+</main>
+</body>
+</html>

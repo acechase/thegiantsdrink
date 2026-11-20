@@ -10,9 +10,10 @@ from how the player has played so far.
 
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 
-from game_world import Challenge, Item, Room, noun
+from game_world import Challenge, Item, Room, key, noun
 from openai_client import complete
 
 DIRECTIONS = ("north", "south", "east", "west", "up", "down")
@@ -32,7 +33,8 @@ An arc is 3 to 6 connected rooms ending in one challenge: an obstacle that bars 
   away from the obstacle, or something the player already carries. Clever unplanned solutions may also succeed in play.
 - The player can examine, take or change anything you describe, so describe concrete, tangible things.
   Mention each item only in its room_text, never in the room description: the engine shows room_text while it's there.
-  Mention only exits that exist. Put the barrier sentence in the challenge room's description.
+  Mention only exits that exist. Make the barrier show a tangible danger and a subtle clue to surviving it.
+  Put the barrier sentence in the challenge room's description.
 - Escalate gradually. Stay original and in-world, with no talk of game mechanics.
 Return only JSON with this shape:
 {"title": str, "premise": "1-2 sentences shown on arrival, hinting at what must be overcome but not how",
@@ -101,6 +103,9 @@ class Saga:
             "iron stands empty; a drift of grey dust is all that remains of the giant. Behind the throne, a crack "
             f"splits the castle wall, and a cold light leaks through it from the {direction}."
         )
+        hall.trial = None
+        hall.scenery = [obj for obj in hall.scenery if obj.name not in ("left cup", "right cup", "silver tray")]
+        hall.items.append(deepcopy(key))
         giant = next((thing for thing in hall.scenery if thing.name == "giant"), None)
         if giant:
             giant.description = "A drift of grey dust in the rough shape of a sleeping man."
@@ -138,6 +143,7 @@ class Saga:
             "chronicle": self.chronicle[-8:],
             "earlier_arcs": [arc.title for arc in self.arcs],
             "recent_commands": game.history[-30:],
+            "remembered_lessons": game.lessons[-8:],
             "carried": [{"name": item.name, "description": item.description} for item in game.inventory],
             "existing_room_names": sorted(world),
         }
@@ -268,7 +274,7 @@ def build_arc(raw, *, number, reserved, world, carried=()):
     if barrier not in gate_room.description:
         gate_room.description = f"{gate_room.description} {barrier}"
     gate_room.challenge = Challenge(obstacle, blocks, barrier, tuple(tools),
-                                    _text(challenge, "room_after"), _text(challenge, "obstacle_after", 600))
+                                    _text(challenge, "room_after"), _text(challenge, "obstacle_after", 600), checkpoint=start)
 
     # Fill in return routes the plan left implicit, without using reserved directions.
     for room in list(rooms.values()):

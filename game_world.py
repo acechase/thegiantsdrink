@@ -2,6 +2,8 @@
 import re
 from dataclasses import dataclass
 
+from trials import FallingStairs, GiantTable
+
 
 def noun(text):
     """Normalize an object reference while retaining meaningful modifiers."""
@@ -61,6 +63,15 @@ class Challenge:
     room_after: str
     obstacle_after: str
     resolved: bool = False
+    checkpoint: str = ""
+    warned: bool = False
+
+    @property
+    def warning(self):
+        """Recall the consequence of crossing an obstacle the player has already tested."""
+        if self.warned and not self.resolved:
+            return f"Your shadow ends at the crossing. One more step {self.blocks} will cost you this life."
+        return ""
 
     def outcome(self, tool):
         """Return the planned result of using a tool on the obstacle, if the plan includes it."""
@@ -77,7 +88,7 @@ class Room:
         exits: Dict mapping direction strings to destination room names.
     """
 
-    def __init__(self, name, description, items=None, exits=None, *, scenery=(), passage=None, challenge=None):
+    def __init__(self, name, description, items=None, exits=None, *, scenery=(), passage=None, challenge=None, trial=None):
         """Initialize a Room with a name, description, items, and exit directions.
 
         name (str): Unique name of the room.
@@ -93,6 +104,7 @@ class Room:
         self.scenery = list(scenery)
         self.passage = passage
         self.challenge = challenge
+        self.trial = trial
         self.generated = False
         self.arc = 0
         self.discoveries = {}
@@ -123,6 +135,10 @@ class Room:
     def prose(self):
         """Describe the room as it currently stands."""
         extras = [item.room_text for item in self.items if item.room_text]
+        if self.trial:
+            extras.append(self.trial.prose())
+        if self.challenge:
+            extras.append(self.challenge.warning)
         if self.passage_open:
             extras.append(self.passage.visible)
         extras.extend(d for d in self.discoveries.values() if d not in self.folded)
@@ -144,6 +160,14 @@ class Room:
             if re.search(pattern, sentence, re.IGNORECASE):
                 return Item(name, sentence)
         return None
+
+    @property
+    def visible_exits(self):
+        """Include an obstructed crossing among the ways the player can try."""
+        exits = list(self.exits)
+        if self.challenge and not self.challenge.resolved and self.challenge.blocks not in exits:
+            exits.append(self.challenge.blocks)
+        return exits
 
     @property
     def passage_open(self):
@@ -332,7 +356,9 @@ great_staircase = Room(
         "west": "Servants Passage",
         "up": "Upper Landing",
     },
-    scenery=(Item("banisters", "Carved stone serpents coil around vines.", aliases=("banister", "carvings")),),
+    trial=FallingStairs(),
+    scenery=(Item("banisters", "The stone serpents are worn smooth where tiny hands have held them. "
+                  "Small footprints overlap along the outer edge.", aliases=("banister", "carvings", "rail", "ledge")),),
 )
 
 upper_landing = Room(
@@ -388,14 +414,19 @@ giants_hall = Room(
     name="Giant's Hall",
     description=(
         "A cavernous hall stretches before you, its ceiling lost in darkness high above. "
-        "An enormous throne of twisted iron dominates the far end. The giant sits upon it, "
-        "chest rising and falling in uneasy sleep. "
-        "The floor trembles faintly with each of his breaths."
+        "You stand on a table at the foot of a twisted iron throne. The giant leans down until you can see "
+        "your whole body reflected in one of his eyes."
     ),
-    items=[key],
+    trial=GiantTable(),
     exits={"south": "Upper Landing", "east": "Throne Antechamber"},
     scenery=(
-        Item("giant", "He sleeps fitfully on the twisted iron throne."),
+        Item("giant", "He leans closer whenever a glass tilts. His gaze lingers in the silver."),
+        Item("left cup", "Clouds are etched into the pale glass. Two narrow marks run from its rim to the tray.",
+             aliases=("left glass", "white cup", "white drink")),
+        Item("right cup", "A thin black ring marks the silver where this glass once fell.",
+             aliases=("right glass", "black cup", "black drink")),
+        Item("silver tray", "The giant blinks. The eye in the metal stays open a moment longer.",
+             aliases=("tray", "reflection", "reflected eye")),
         Item("iron throne", "Its feet have sunk into the floor."),
     ),
 )
