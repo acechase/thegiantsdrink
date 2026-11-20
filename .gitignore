@@ -13,3 +13,4 @@ htmlcov/
 docs/
 dist/
 *.egg-info/
+saves/

@@ -25,8 +25,9 @@ header { justify-content: space-between; padding-bottom: 16px; border-bottom: 1p
 .mark::before, .mark::after { content: ""; position: absolute; inset: 4px 4px 0; border: 1px solid #e7dcbb; border-bottom: 0; border-radius: 10px 10px 0 0; }
 .mark::after { inset: 8px 8px 0; }
 nav { gap: 3px; }
-nav button, #close, #older, #retry { border: 0; padding: 6px 9px; font-size: 13px; color: var(--pine); }
-nav button:hover, nav [aria-expanded=true], #close:hover, #older:hover, #retry:hover { background: #e7e3d6; }
+nav button, nav a, #close, #older, #retry { border: 0; padding: 6px 9px; font-size: 13px; color: var(--pine); }
+nav a { text-decoration: none; }
+nav button:hover, nav a:hover, nav [aria-expanded=true], #close:hover, #older:hover, #retry:hover { background: #e7e3d6; }
 #count { color: var(--rust); font-variant-numeric: tabular-nums; }
 .spread { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: clamp(20px, 3.5vw, 48px); align-items: center; padding: 25px 0; }
 .plate { padding: 4px; border: 1px solid #858a77; background: #283b32; box-shadow: 0 2px 5px #30271722; }
@@ -50,6 +51,8 @@ h1 { color: var(--pine); font: normal clamp(34px, 4vw, 57px)/1.02 var(--serif); 
 #trail li:not(:last-child)::after { content: "·"; padding: 0 8px; }
 #trail li:last-child { color: var(--pine); }
 .plate img.portrait { object-fit: contain; }
+#saved { margin: 10px 0 0; color: var(--quiet); font-size: 12px; }
+#saved.failed { color: var(--rust); }
 .carried em { color: var(--quiet); font-size: 12px; font-style: normal; }
 .action { border-top: 1px solid var(--line); padding-top: 16px; }
 .byline { font-size: 13px; margin-bottom: 5px; overflow-wrap: anywhere; }

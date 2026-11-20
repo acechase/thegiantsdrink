@@ -197,13 +197,22 @@ def test_cli_and_browser_follow_identical_turns(game, monkeypatch):
 
     inputs = iter(commands)
     monkeypatch.setattr(cli_session, "turn", record)
-    monkeypatch.setattr(main, "GameSession", lambda world: cli_session)
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
-    main._play(None)
+
+    class Slot:
+        ident, saved = "cli", []
+
+        def save(self, session, journal):
+            self.saved.append(len(journal))
+
+    cli_journal = []
+    main._play(None, cli_session, cli_journal, Slot())
     for command, (room, events) in zip(commands, terminal):
         state = submit(game, command)
         assert state["room"] == room and state["latest"]["events"] == events
-    assert len(terminal) == len(commands)
+    assert len(terminal) == len(commands) and Slot.saved == list(range(1, len(commands) + 1))
+    assert [(e["command"], e["place"], e["events"]) for e in cli_journal] == [
+        (e["command"], e["place"], e["events"]) for e in game.journal]
     assert game.session.behavior.get_profile() == cli_session.behavior.get_profile()
     assert game.session.adaptation.get_difficulty() == cli_session.adaptation.get_difficulty()
     assert game.session.saga.gate == cli_session.saga.gate

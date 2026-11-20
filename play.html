@@ -14,6 +14,7 @@
     <nav aria-label="Player">
       <button id="bag" aria-controls="drawer" aria-expanded="false">Inventory <span id="count"></span></button>
       <button id="history" aria-controls="drawer" aria-expanded="false">Journal</button>
+      <a id="playthrough" href="/playthrough" target="_blank" rel="noopener">Playthrough</a>
     </nav>
   </header>
   <aside id="drawer" hidden aria-labelledby="drawer-title">
@@ -49,6 +50,7 @@
       <button id="act" type="submit" disabled>Act <span aria-hidden="true">↵</span></button>
     </form>
     <div id="suggestions"></div>
+    <p id="saved"></p>
     <div class="sr" role="status" id="announcement"></div>
   </section>
 </main>

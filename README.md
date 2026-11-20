@@ -10,6 +10,7 @@ A text-based adventure game where you explore a castle, collect items, and face 
 - **Natural language commands** — type freely; an LLM parses your intent
 - **15 rooms** with rich, atmospheric descriptions inspired by Ender's Game's Mind Game
 - **Lives and checkpoints** — danger follows repeatable rules, and what you learn survives each death
+- **Autosave and shareable playthroughs** — resume any game, and export the whole story with its illustrations as one HTML page
 - **Endless arcs after the giant** — the world keeps growing, one AI-planned challenge arc at a time
 - **Adaptive difficulty** — the game watches how you play and adjusts the world accordingly
 - **Player profiling** — the behavior analyzer tracks your play style and tailors content
@@ -57,13 +58,37 @@ Play in a browser with the room illustration, story, and command input on one pa
 
 The game opens a tab and prints its local address. Click a detail to examine it, click an exit to move, or type an action in your own words. The Trail row lists your last four moves. Inventory shows what you carry and marks what you have on. The journal keeps your commands, outcomes, and chapter arrivals. You can draft your next action while a turn is running.
 
-Refresh or reopen the printed address to rejoin the same game. All tabs at that address share one player. Typing `quit` ends play and leaves the journal available. Press Ctrl+C in the launching terminal to stop the server. Progress lasts for the lifetime of that Python process.
+Refresh or reopen the printed address to rejoin the same game. All tabs at that address share one player. Typing `quit` ends play and leaves the journal available. Press Ctrl+C in the launching terminal to stop the server. Every turn is saved, so you can stop at any time and resume later (see [Saving and sharing](#saving-and-sharing)).
 
 On Windows use `.venv\Scripts\python.exe main.py --browser`. For terminal play on macOS or Linux, run `./.venv/bin/python main.py`. Add `--visuals` for a separate read-only room companion.
 
 Anything you put on, such as a helm, a tapestry worn as a cloak, or a chain looped like a necklace, stays on until you take it off or set it down. Type `look at yourself` to see a full-length portrait of your character in place of the room illustration. Your next action brings the room back. Each distinct outfit is painted once and cached.
 
 Both browser modes listen on `127.0.0.1`. The game generates and caches illustrations in `.room-art/` for each distinct visible scene. Taking an item or opening a passage can trigger another image request. Revisiting a cached scene reuses its art. Browser play shows a sketch of the exits while an illustration is pending or unavailable. You can continue playing or retry a failed illustration.
+
+## Saving and sharing
+
+Every game saves itself after each turn, in the browser and in the terminal. Each game gets a folder in `saves/` named after the moment it started, such as `saves/2026-11-20_15-32-07/`.
+
+```bash
+./.venv/bin/python main.py --browser --continue          # resume your most recent game
+./.venv/bin/python main.py --browser --load 2026-11-20_15-32-07
+./.venv/bin/python main.py --saves                       # list saved games
+./.venv/bin/python main.py --export                      # write a playthrough of the latest game
+./.venv/bin/python main.py --export 2026-11-20_15-32-07
+```
+
+Leave out `--browser` to resume in the terminal instead. Resuming a game you quit reopens it.
+
+A **playthrough** is one self-contained HTML page with every command, outcome, death, lesson and chapter, along with the illustrations and portraits painted along the way. Open it from the **Playthrough** link while you play, or export it with `--export` to `saves/<game>/playthrough.html`. You can email the file or host it anywhere. Rooms you passed through before their illustration finished appear without a picture.
+
+Each save folder holds `game.json` (the readable journal) and `state.bin` (a snapshot of the world). Snapshots are signed with `saves/.key`, which is created on your computer the first time you save. The game resumes only snapshots that carry that signature, because loading a snapshot can run code. Saves copied from someone else can still be exported as playthroughs. Keep `saves/.key` if you move your saves to another computer.
+
+To keep the story of a game that is still running on a build from before saving existed, give its address to `--archive`. This writes a view-only save with a text playthrough:
+
+```bash
+./.venv/bin/python main.py --archive http://127.0.0.1:64482
+```
 
 ## How to Play
 

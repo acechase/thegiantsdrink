@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from http.server import ThreadingHTTPServer
 
+from playthrough import render
 from room_companion import DEFAULT_IMAGE_MODEL, HERE, RoomCompanion, ViewerHandler, launch_tab
 
 logger = logging.getLogger(__name__)
@@ -17,14 +18,16 @@ logger = logging.getLogger(__name__)
 class BrowserGame:
     """Serialize commands and publish completed turns separately from in-flight activity."""
 
-    def __init__(self, session, viewer):
-        """Start the command worker and publish the opening scene."""
+    def __init__(self, session, viewer, *, journal=None, store=None):
+        """Start the command worker and publish the opening scene, continuing a saved journal if given."""
         self.session = session
         self.viewer = viewer
+        self.store = store
+        self.saved = {"id": store.ident, "turn": len(journal or [])} if store and journal else None
         self.condition = threading.Condition()
         self.closed = False
         self.pending = None
-        self.journal = []
+        self.journal = list(journal or [])
         self.receipts = {}
         self.room = session.public_state()
         session.show(self.viewer)
@@ -66,7 +69,16 @@ class BrowserGame:
             return {
                 "turn": len(self.journal), "room": self.room, "art": self.viewer.snapshot(),
                 "latest": self.journal[-1] if self.journal else None, "pending": self.pending,
+                "save": self.saved,
             }
+
+    def playthrough(self):
+        """Render every turn so far as a shareable page."""
+        with self.condition:
+            record = {"journal": list(self.journal), "lessons": self.room["lessons"], "life": self.room["life"]}
+        if self.store:
+            record["started"] = self.store.record().get("started", "")
+        return render(record, self.viewer.cache_dir)
 
     def entries(self, before=None):
         """Return up to fifty earlier exchanges, most recent first."""
@@ -112,9 +124,27 @@ class BrowserGame:
                 else:
                     self.session, self.room = session, room
                     session.show(self.viewer)
+                art = self.viewer.snapshot()
+                entry["art"] = {"key": art["key"], "kind": art["kind"]} if art.get("key") else None
                 self.journal.append(entry)
                 self.pending = None
+                session, journal = self.session, list(self.journal)
                 self.condition.notify_all()
+            self._save(session, journal)
+
+    def _save(self, session, journal):
+        """Write the committed turn to disk; a failure leaves the game playable."""
+        if not self.store:
+            return
+        try:
+            self.store.save(session, journal)
+            saved = {"id": self.store.ident, "turn": len(journal)}
+        except Exception as exc:
+            logger.exception("Could not save the game")
+            saved = {"id": self.store.ident, "turn": len(journal), "error": f"Could not save this turn: {exc}"}
+        with self.condition:
+            self.saved = saved
+            self.condition.notify_all()
 
     def close(self):
         """Detach the server immediately even if a model call is finishing."""
@@ -139,6 +169,8 @@ class PlayHandler(ViewerHandler):
             self.send_error(403)
         elif self.path == "/state":
             self._json(200, self.server.game.snapshot())
+        elif self.path == "/playthrough":
+            self._send(200, "text/html; charset=utf-8", self.server.game.playthrough().encode("utf-8"))
         elif self.path in self.server.assets:
             self._send(200, *self.server.assets[self.path])
         elif self.path.startswith("/journal"):
@@ -175,14 +207,14 @@ class PlayHandler(ViewerHandler):
 
 
 @contextmanager
-def play_server(session, cache_dir, model):
+def play_server(session, cache_dir, model, *, journal=None, store=None):
     """Bind an ephemeral local port and own the game and illustration workers."""
     page = (HERE / "play.html").read_bytes()
     assets = {"/play.js": ("text/javascript; charset=utf-8", (HERE / "play.js").read_bytes()),
               "/play.css": ("text/css; charset=utf-8", (HERE / "play.css").read_bytes())}
     with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
         server.viewer = RoomCompanion(cache_dir, model)
-        server.game = BrowserGame(session, server.viewer)
+        server.game = BrowserGame(session, server.viewer, journal=journal, store=store)
         server.page, server.assets = page, assets
         try:
             yield server
@@ -190,11 +222,14 @@ def play_server(session, cache_dir, model):
             server.game.close()
 
 
-def play_in_browser(session):
+def play_in_browser(session, *, journal=None, store=None):
     """Open the local game and keep it available across tab closes and refreshes."""
+    model = os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
     try:
-        with play_server(session, HERE / ".room-art", os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL) as server:
+        with play_server(session, HERE / ".room-art", model, journal=journal, store=store) as server:
             url = f"http://127.0.0.1:{server.server_port}/"
+            if store:
+                print(f"Autosaving as {store.ident}. Resume later with --continue or --load {store.ident}.")
             print(f"Play The Giant's Drink at {url}\nPress Ctrl+C here to stop the server.", flush=True)
             launch_tab(url)
             server.serve_forever()

@@ -93,6 +93,11 @@ function renderArt(art) {
   };
   img.src = art.image;
 }
+function renderSave(save) {
+  el("saved").classList.toggle("failed", Boolean(save?.error));
+  text("saved", !save ? "" : save.error ||
+    "Autosaved as " + save.id + " after turn " + save.turn + ". Resume later with --continue.");
+}
 function eventNodes(events, includeArrival) {
   return events.filter(event => includeArrival || event.kind !== "arrival").map(event =>
     node("p", event.text, event.kind === "chapter" ? "chapter-event" : event.kind));
@@ -255,6 +260,7 @@ async function poll() {
       if (drawer === "journal") loadJournal();
     }
     renderArt(state.art);
+    renderSave(state.save);
     renderEntry(state.pending || state.latest);
     controls();
     if (outbox) await deliver();
