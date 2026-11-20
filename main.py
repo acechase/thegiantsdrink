@@ -63,7 +63,7 @@ def _play(viewer):
     print("[Procedural] Opening room.", flush=True)
     print(session.game.get_current_description(session.rooms))
     if viewer:
-        viewer.show(session.room, description=session.description)
+        session.show(viewer)
 
     while not session.ended:
         try:
@@ -75,7 +75,7 @@ def _play(viewer):
             with _quiet_typeahead():
                 session.turn(command, lambda event: print(event.text, flush=True))
                 if viewer and not session.ended:
-                    viewer.show(session.room, description=session.description)
+                    session.show(viewer)
 
 
 if __name__ == "__main__":

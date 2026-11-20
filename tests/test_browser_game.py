@@ -220,3 +220,14 @@ def test_unavailable_cache_leaves_text_playable(tmp_path):
         assert submit(browser, "examine shelf")["latest"]["events"][0]["kind"] == "outcome"
     finally:
         browser.close()
+
+
+def test_portrait_replaces_the_room_art_for_one_turn(game):
+    submit(game, "take candle")
+    state = submit(game, "look at yourself")
+    assert state["art"]["kind"] == "portrait" and list(state["art"]["items"]) == ["candle"]
+    assert state["latest"]["events"][-1]["text"].endswith("You have nothing from the castle on. You carry the candle.")
+    portrait_key = state["art"]["key"]
+    state = submit(game, "examine shelf")
+    assert state["art"]["kind"] == "room" and state["art"]["name"] == "Starting Room"
+    assert submit(game, "me")["art"]["key"] == portrait_key  # An unchanged outfit reuses its painting.

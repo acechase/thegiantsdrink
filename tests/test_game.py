@@ -758,6 +758,27 @@ class TestEnvironment:
         assert corridor.prose() == "A long passage. One tapestry is missing from the walls."
         assert sent_scene(openai_api)["fixed_features"].startswith("A long passage stretches")
 
+    def test_worn_items_follow_the_adjudicated_outcome(self, openai_api, game, wmap):
+        game.move("north", wmap)
+        fixed = wmap["Corridor"].fixed_text()
+        cloak = "The tapestry hangs from your shoulders like a cloak."
+        openai_api.post(OPENAI_URL, json=adjudication(
+            effect="detach", anchor="tapestries", reply="You pull one down and swing it over your shoulders.",
+            room_after=fixed, description="One tapestry is missing.", piece="tapestry",
+            piece_description="Faded giants feast across the weave.", worn=cloak))
+        openai_api.post(OPENAI_URL, json=adjudication(
+            effect="observe", anchor="tapestry", reply="The weave smells of dust.", worn="off"))
+        openai_api.post(OPENAI_URL, json=adjudication(
+            effect="alter", anchor="tapestry", reply="You fold it over your arm.", room_after=fixed,
+            description="A folded tapestry.", worn="off"))
+        game.investigate("tapestries", wmap, "wear a tapestry as a cloak")
+        assert game.worn == {"tapestry": cloak}
+        assert game.examine("tapestry", wmap) == f"Faded giants feast across the weave. {cloak}"
+        game.investigate("tapestry", wmap, "sniff my cloak")
+        assert game.worn == {"tapestry": cloak} and sent_scene(openai_api, 1)["wearing"] == {"tapestry": cloak}
+        game.investigate("tapestry", wmap, "fold the cloak over my arm")
+        assert game.worn == {}
+
     def test_detail_mentioned_only_in_prose_can_be_taken(self, openai_api, game, wmap):
         for direction in ("north", "east"):
             game.move(direction, wmap)

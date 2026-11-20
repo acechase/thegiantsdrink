@@ -8,7 +8,7 @@ from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
 from content_generator import ContentGenerator
 from game_world import find_object, noun, world_map
-from room_companion import Scene
+from room_companion import Portrait, Scene
 from saga import CASTLE_HORIZON, Saga
 from simulation_engine import GameState
 from trials import GiantTable
@@ -24,6 +24,7 @@ HELP_TEXT = """Available commands:
   USE <item> ON <object> - Try a tool on something nearby
   ATTACK <target> - Attack something
   REMEMBER      - Recall lessons from earlier lives
+  LOOK AT YOURSELF - See what you have on and carry (paints a portrait in the browser)
   INVENTORY     - Check your inventory
   HELP          - Show this help message
   QUIT / EXIT   - Leave the game"""
@@ -57,6 +58,7 @@ class GameSession:
         self.content = ContentGenerator()
         self.saga = Saga()
         self.ended = False
+        self.portrait = None  # Shown in place of the room illustration until the next turn.
         self.scene = Scene.from_room(self.room)
         self.description = self.scene.description
 
@@ -76,11 +78,19 @@ class GameSession:
             "name": room.name, "description": self.description,
             "chapter": self.saga.arcs[room.arc - 1].title if room.arc else "The Castle",
             "items": self.scene.items, "scenery": self.scene.scenery, "exits": exits,
-            "inventory": [item.name for item in self.game.inventory], "ended": self.ended,
+            "inventory": [item.name for item in self.game.inventory], "worn": list(self.game.worn),
+            "trail": [{"way": way, "room": name} for way, name in self.game.trail[-4:]], "ended": self.ended,
             "life": self.game.deaths + 1, "lessons": list(self.game.lessons),
             "offers": [f"Drink from the {side} cup" for side in ("left", "right") if side not in room.trial.spilled]
             if isinstance(room.trial, GiantTable) else [],
         }
+
+    def show(self, viewer):
+        """Illustrate the player's portrait if they just looked themselves over, otherwise their room."""
+        if self.portrait:
+            viewer.show_portrait(self.portrait)
+        else:
+            viewer.show(self.room, description=self.description)
 
     def turn(self, command, on_event=None):
         """Resolve one command, delivering each event live and returning the ordered transcript."""
@@ -98,6 +108,7 @@ class GameSession:
         def report(text):
             emit("activity", text)
 
+        self.portrait = None
         self.game.history.append(command)
         previous = self.room
         action, target = parse_command(command, previous, self.game.inventory, report=report)
@@ -112,6 +123,7 @@ class GameSession:
 
         previous_deaths = self.game.deaths
         result = self._resolve(command, action, target, report)
+        self.game.prune_worn()
         profile = self.behavior.get_profile()
         summary = self.behavior.get_profile_summary()
         self.adaptation.adjust_difficulty(profile, summary)
@@ -125,6 +137,8 @@ class GameSession:
             emit("arrival", self.game.get_current_description(self.rooms))
             return events
         emit("outcome", result)
+        if action == "self":
+            self.portrait = Portrait.of(self.game, self.room, result)
         if self.game.giant_defeated and not self.saga.started:
             emit("milestone", "The giant’s bargain is broken.")
             self.saga.begin(self.rooms, result)
@@ -166,6 +180,8 @@ class GameSession:
         game, rooms, room = self.game, self.rooms, self.room
         if action == "remember":
             return "\n".join(game.lessons) or "This is your first life. You have no lessons to recall yet."
+        if action == "self":
+            return game.appearance()
         if action == "trial" and room.trial and target in room.trial.intents:
             result = room.trial.resolve(target, game, rooms)
             if target == "follow edge":
@@ -215,7 +231,7 @@ class GameSession:
             self.behavior.update_profile("attack")
         elif action == "check" and target == "inventory":
             result = (
-                "Inventory: " + ", ".join([item.name for item in game.inventory])
+                "Inventory: " + ", ".join(item.name + (" (worn)" if item.name in game.worn else "") for item in game.inventory)
                 if game.inventory
                 else "Your inventory is empty."
             )

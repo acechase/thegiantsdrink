@@ -15,9 +15,10 @@ class ToolUse(NamedTuple):
 
 
 SYSTEM_PROMPT = """Interpret one player's command for a castle exploration game. Return only a JSON object.
-Actions: move, take, drop, use, use_on, examine, search, interact, attack, check, look, help, quit, trial, unknown.
+Actions: move, take, drop, use, use_on, examine, search, interact, attack, check, look, self, help, quit, trial, unknown.
 Use "look" with target "around" only for the whole room. Looking at, inspecting or examining an object is "examine".
 For "take", "use", "examine", or "attack", target is the object name. For "check", target is "inventory".
+Use "self" with target "appearance" when the player looks at or asks about their own appearance, body or outfit.
 For "move", target is north, south, east, west, up or down. For "help" and "quit", use "commands" and "game".
 When the player uses an object to do something to another object, preserve BOTH nouns, even if the attempt may fail.
 Examples: "listen for hollow stone by tapping it with my staff" -> {"action":"use_on","tool":"staff","target":"stone wall"}
@@ -40,6 +41,11 @@ SIMPLE_COMMANDS = {
     "remember": ("remember", "lessons"),
     "lessons": ("remember", "lessons"),
     "inventory": ("check", "inventory"),
+    **{phrase: ("self", "appearance") for phrase in (
+        "me", "myself", "self", "portrait", "look at me", "look at myself", "look at yourself", "examine me",
+        "examine myself", "examine yourself", "x me", "x myself", "inspect myself", "look myself over",
+        "what do i look like", "how do i look",
+    )},
     "help": ("help", "commands"),
     "quit": ("quit", "game"),
     "exit": ("quit", "game"),
@@ -145,7 +151,7 @@ def extract_action_target(text):
                 return None, None
             valid_actions = {
                 "move", "take", "drop", "use", "attack", "check", "look", "examine", "search",
-                "interact", "help", "quit", "trial"
+                "interact", "help", "quit", "trial", "self"
             }
             if isinstance(action, str) and action in valid_actions and isinstance(target, str) and target:
                 return action, target.strip()

@@ -1,4 +1,6 @@
 # simulation_engine.py
+import re
+
 from environment_actions import resolve_environment
 from game_world import find_object, noun
 from trials import FallingStairs, GiantTable
@@ -33,7 +35,36 @@ class GameState:
         self.table_deaths = 0
         self.lessons = []
         self.last_lesson = ""
+        self.worn = {}  # Carried item name -> how the player wears it, in one second-person sentence.
+        self.trail = []  # (direction or "woke", room name) for each arrival, most recent last.
         self.breakthrough = None  # A room whose obstacle the player has just overcome.
+
+    def _arrive(self, how, room_name):
+        self.current_room = room_name
+        self.trail = [*self.trail, (how, room_name)][-12:]
+
+    def wearing(self):
+        """Return each carried item the player has on, with how it is worn."""
+        return [(item, self.worn[item.name]) for item in self.inventory if item.name in self.worn]
+
+    def prune_worn(self):
+        """Forget worn state for anything that has left the player's possession."""
+        held = {item.name for item in self.inventory}
+        self.worn = {name: how for name, how in self.worn.items() if name in held}
+
+    def appearance(self):
+        """Describe what the player has on and in hand, without inventing anything else."""
+        def listed(names):
+            names = [f"the {name}" for name in names]
+            return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+        worn = [how for _, how in self.wearing()]
+        held = [item.name for item in self.inventory if item.name not in self.worn]
+        return " ".join([
+            "You look yourself over.",
+            *(worn or ["You have nothing from the castle on."]),
+            f"You carry {listed(held)}." if held else "Your hands are empty.",
+        ])
 
     def die(self, cause, lesson, checkpoint):
         """Start the next life at a checkpoint and keep the player's discoveries and possessions."""
@@ -41,7 +72,7 @@ class GameState:
         self.last_lesson = lesson
         if lesson not in self.lessons:
             self.lessons.append(lesson)
-        self.current_room = checkpoint
+        self._arrive("woke", checkpoint)
         self.potion_active = False
         return f"{cause} You die."
 
@@ -85,7 +116,7 @@ class GameState:
             # Victory Chamber requires unlocked door
             if target_room == "Victory Chamber" and not self.door_unlocked:
                 return "The iron door is locked. You need a key."
-            self.current_room = target_room
+            self._arrive(direction, target_room)
             return f"You move to the {self.current_room}."
         return "You can't go that way."
 
@@ -107,10 +138,19 @@ class GameState:
                 room.departed.append(item)
             return f"You take the {item.name}."
         held = find_object(item_name, self.inventory)
+        if held and self._taking_off(held, command):
+            return self._take_off(held)
         if held:
             return f"You're already carrying the {held.name}."
         return resolve_environment(self, room, command, item_name, report=report,
                                    fallback="There is no such item here." if not room.landmark(item_name) else None)
+
+    def _taking_off(self, item, command):
+        return item.name in self.worn and re.search(r"\b(?:off|remove|doff)\b", (command or "").casefold())
+
+    def _take_off(self, item):
+        del self.worn[item.name]
+        return f"You take off the {item.name} and carry it."
 
     def drop_item(self, reference, world_map):
         """Return a carried object to the current room."""
@@ -118,6 +158,7 @@ class GameState:
         if not item:
             return f"You're not carrying the {reference}."
         self.inventory.remove(item)
+        self.worn.pop(item.name, None)
         room = world_map[self.current_room]
         room.items.append(item)
         if item in room.departed:
@@ -133,6 +174,8 @@ class GameState:
         passage = room.passage
         if room.passage_open and obj.name == passage.landmark:
             return passage.visible
+        if obj in self.inventory and obj.name in self.worn:
+            return f"{obj.description} {self.worn[obj.name]}"
         return obj.description
 
     def investigate(self, reference, world_map, command, *, search=False, tool=None, report=None):
@@ -211,6 +254,8 @@ class GameState:
         item = find_object(item_name, self.inventory)
         if not item:
             return "You can't use that item or it's not in your inventory."
+        if self._taking_off(item, command):
+            return self._take_off(item)
         if world_map is not None:
             room = world_map[self.current_room]
             challenge, _ = self.active_challenge(room)
@@ -247,7 +292,10 @@ class GameState:
             elif "torch" in item.name.lower():
                 return "The torch flares brightly, pushing shadows to the walls."
             elif "helm" in item.name.lower():
-                return "You put on the iron helm. You feel tougher."
+                if item.name in self.worn:
+                    return f"The {item.name} is already on your head."
+                self.worn[item.name] = f"The {item.name} sits low over your brow."
+                return f"You put on the {item.name}. You feel tougher."
         return self._improvise(item, f"What would you like to use the {item.name} on?", world_map, command, report)
 
     def attack(self, target, difficulty=1.0, *, world_map=None):

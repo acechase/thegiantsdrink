@@ -47,6 +47,9 @@ function renderRoom(room) {
   el("objects").replaceChildren(...objects.map(name => commandButton(name, "examine " + name)));
   el("exit-row").hidden = !room.exits.length;
   el("exits").replaceChildren(...room.exits.map(d => commandButton(arrows[d] + " " + title(d), "go " + d)));
+  el("trail-row").hidden = !room.trail.length;
+  el("trail").replaceChildren(...room.trail.map(step =>
+    node("li", step.way === "woke" ? "Woke at " + step.room : title(step.way) + " to " + step.room)));
   const center = node("span", "✧");
   center.setAttribute("aria-hidden", "true");
   el("sketch").replaceChildren(center, ...room.exits.map(d => commandButton(title(d), "go " + d, d)));
@@ -54,11 +57,17 @@ function renderRoom(room) {
   guide.id = "guide";
   guide.onclick = () => openDrawer("guide", guide);
   const offers = room.offers.map(label => commandButton(label, label));
-  el("suggestions").replaceChildren(...offers, ...room.items.slice(0, 3).map(n => commandButton("Take " + n, "take " + n)), guide);
+  const takes = room.items.slice(0, 3).map(n => commandButton("Take " + n, "take " + n));
+  const mirror = room.inventory.length ? [commandButton("Look at yourself", "look at yourself")] : [];
+  el("suggestions").replaceChildren(...offers, ...takes, ...mirror, guide);
 }
 function renderArt(art) {
-  const statuses = {waiting: "Waiting for the room…", queued: "Illustration queued",
-    generating: "Illustrating this room…", cached: "Cached room illustration", ready: "Room illustration", error: art.error};
+  const portrait = art.kind === "portrait";
+  const shown = "Your portrait. Your next action returns to the room.";
+  const statuses = portrait
+    ? {queued: "Portrait queued", generating: "Painting your portrait…", cached: shown, ready: shown, error: art.error}
+    : {waiting: "Waiting for the room…", queued: "Illustration queued", generating: "Illustrating this room…",
+      cached: "Cached room illustration", ready: "Room illustration", error: art.error};
   text("art-status", statuses[art.status] || "");
   el("retry").hidden = art.status !== "error";
   if (art.image === imageURL) return;
@@ -69,7 +78,8 @@ function renderArt(art) {
   if (!art.image) return;
   const img = new Image();
   activeImage = img;
-  img.alt = "An illustration of " + state.room.name;
+  img.alt = portrait ? "A portrait of your character as they look now" : "An illustration of " + state.room.name;
+  img.classList.toggle("portrait", portrait);
   img.onload = () => {
     if (activeImage !== img || state.art.key !== art.key) return;
     el("sketch").after(img);
@@ -114,7 +124,12 @@ function controls() {
 function renderBag() {
   const items = state?.room.inventory || [];
   const list = node("div", "", "carried");
-  list.append(...items.map(name => commandButton(name, "examine " + name)));
+  const worn = new Set(state?.room.worn || []);
+  list.append(...items.map(name => {
+    const item = commandButton(name, "examine " + name);
+    if (worn.has(name)) item.append(" ", node("em", "worn"));
+    return item;
+  }));
   el("drawer-body").replaceChildren(items.length ? list : node("p", "You’re carrying nothing."));
 }
 async function loadJournal(earlier = false) {
@@ -176,7 +191,7 @@ function openDrawer(name, trigger) {
     loadJournal();
   }
   if (name === "guide") el("drawer-body").replaceChildren(node("p",
-    "Describe what you want to try. Click a detail to examine it or an exit to move. You can take and drop items, search a landmark, or use something you carry on something in the room. Type “help” for the full command list or “quit” to end this session."));
+    "Describe what you want to try. Click a detail to examine it or an exit to move. You can take and drop items, search a landmark, or use something you carry on something in the room. “Look at yourself” paints a portrait of what you have on. Type “help” for the full command list or “quit” to end this session."));
   controls();
   el("close").focus();
 }

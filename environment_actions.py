@@ -14,6 +14,10 @@ Answer in JSON. Choose one effect: observe (includes unsuccessful attempts), alt
 If the subject is a group or quantity (tapestries, coins, books) and the player takes only some of it, use detach.
 Fields: anchor = short verbatim noun phrase naming the subject from the supplied scene; reply = 1-2 sentences of feedback.
 The player's own body is always present: for wearing, wrapping or holding something, anchor the carried item.
+wearing lists what the player already has on. When the attempt puts an item on the body (wearing, draping, wrapping,
+tying on), use alter for a carried item, or take/detach to pick it up, and supply worn: one short second-person
+sentence saying how it now sits on the player, e.g. "The tapestry hangs from your shoulders like a cloak."
+Taking off a worn item is alter with worn "off", never remove. Omit worn when nothing goes on or comes off.
 If no such subject exists, use an empty anchor. Never substitute another object just to make an action succeed.
 For any change supply room_after: a rewrite of fixed_features only, reflecting the change. Copy unaffected sentences verbatim,
 including mentioned exits and discoveries, and drop details the change makes untrue. Never repeat engine_sentences in
@@ -57,7 +61,7 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
         "observed": room.seen_details,
         "loose": [obj.name for obj in room.items], "landmarks": [obj.name for obj in room.scenery],
         "removed_from_room": [obj.name for obj in room.departed],
-        "carrying": [obj.name for obj in game.inventory], "exits": list(room.exits),
+        "carrying": [obj.name for obj in game.inventory], "wearing": game.worn, "exits": list(room.exits),
         "attempt": command, "subject": reference, "subject_description": subject.description if subject else None,
         "held_tool": tool.name if tool else None,
     }
@@ -135,6 +139,13 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
         room.items.append(tool)
         if tool in room.departed:
             room.departed.remove(tool)
+    worn = _field(data, "worn", 240)
+    if worn and effect in ("alter", "take", "detach"):
+        item = game.inventory[-1] if effect == "detach" else subject
+        if item in game.inventory and worn.casefold().strip(" .\"'") == "off":
+            game.worn.pop(item.name, None)
+        elif item in game.inventory:
+            game.worn[item.name] = worn
     room.rewrite(base)
     if report:
         report("[Procedural] Updating the room and inventory.")

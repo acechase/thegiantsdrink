@@ -27,7 +27,7 @@ class BrowserGame:
         self.journal = []
         self.receipts = {}
         self.room = session.public_state()
-        self.viewer.show(session.room, description=session.description)
+        session.show(self.viewer)
         self.worker = threading.Thread(target=self._work, name="game-turns", daemon=True)
         self.worker.start()
 
@@ -111,7 +111,7 @@ class BrowserGame:
                     entry["events"] = [{"kind": "error", "text": "The turn was interrupted. You can try that action again."}]
                 else:
                     self.session, self.room = session, room
-                    self.viewer.show(session.room, description=session.description)
+                    session.show(self.viewer)
                 self.journal.append(entry)
                 self.pending = None
                 self.condition.notify_all()

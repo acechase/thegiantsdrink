@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from game_session import GameSession
@@ -96,3 +98,69 @@ def test_table_can_be_inspected_and_broken_one_cup_at_a_time(castle, monkeypatch
     assert [evt.kind for evt in events].count("milestone") == 1
     assert castle.saga.started and castle.game.deaths == 0 and "key" in castle.public_state()["items"]
     assert "left cup" not in castle.public_state()["scenery"]
+
+
+class Viewer:
+    def __init__(self):
+        self.shown = []
+
+    def show(self, room, *, description=None):
+        self.shown.append(("room", room.name))
+
+    def show_portrait(self, portrait):
+        self.shown.append(("portrait", portrait.place))
+
+
+def scripted(monkeypatch, replies):
+    """Answer parser and adjudicator calls in order, failing loudly on an unexpected request."""
+    replies = iter(replies)
+
+    def complete(*args, **kw):
+        return next(replies)
+
+    monkeypatch.setattr("command_parser.complete", complete)
+    monkeypatch.setattr("environment_actions.complete", complete)
+
+
+def test_portrait_shows_what_the_player_has_on_until_the_next_turn(castle, monkeypatch):
+    for command in ("take sword", "use sword on wall", "down", "take helm", "use helm", "take chain"):
+        castle.turn(command)
+    dungeon = castle.room.fixed_text()
+    scripted(monkeypatch, [
+        '{"action":"use","target":"iron chain"}',
+        json.dumps({"effect": "alter", "anchor": "iron chain", "reply": "You loop the chain around your neck.",
+                    "room_after": dungeon, "description": "A heavy chain, now looped twice.",
+                    "worn": "The iron chain loops around your neck like a necklace."}),
+    ])
+    castle.turn("wear the chain like a necklace")
+    viewer = Viewer()
+    text = castle.turn("look at yourself")[-1].text
+    assert text == ("You look yourself over. The iron helm sits low over your brow. "
+                    "The iron chain loops around your neck like a necklace. You carry the rusty sword.")
+    castle.show(viewer)
+    prompt = castle.portrait.request("model")["prompt"]
+    assert "like a necklace" in prompt and "rusty sword" in prompt and "Room behind the figure: Dungeon" in prompt
+    assert castle.public_state()["worn"] == ["iron helm", "iron chain"]
+    assert castle.turn("inventory")[-1].text == "Inventory: rusty sword, iron helm (worn), iron chain (worn)"
+    castle.show(viewer)
+    assert viewer.shown == [("portrait", "Dungeon"), ("room", "Dungeon")] and castle.portrait is None
+
+    scripted(monkeypatch, ['{"action":"take","target":"iron helm"}'])
+    assert castle.turn("take off the helm")[-1].text == "You take off the iron helm and carry it."
+    castle.turn("drop chain")
+    castle.turn("take chain")
+    assert castle.public_state()["worn"] == []
+    assert castle.turn("me")[-1].text == ("You look yourself over. You have nothing from the castle on. "
+                                          "You carry the rusty sword, the iron helm and the iron chain.")
+
+
+def test_trail_names_the_last_four_arrivals_including_a_respawn(castle):
+    for command in ("north", "north", "up", "follow the banister", "north"):
+        castle.turn(command)
+    assert castle.public_state()["trail"] == [
+        {"way": "north", "room": "Great Staircase"}, {"way": "woke", "room": "Great Staircase"},
+        {"way": "up", "room": "Upper Landing"}, {"way": "north", "room": "Giant's Hall"},
+    ]
+    castle.turn("south")
+    assert castle.public_state()["trail"][-1] == {"way": "south", "room": "Upper Landing"}
+    assert len(castle.game.trail) == 6

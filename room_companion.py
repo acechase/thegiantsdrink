@@ -26,6 +26,20 @@ STYLE = (
     "containers, rugs, props, creatures or decorations that the text does not mention. Leave out unseen "
     "destinations, the player, lettering, icons and interface elements."
 )
+PORTRAIT_STYLE = (
+    "Full-length character portrait for a surreal fairy-tale castle exploration game, in the same illustrated "
+    "field-guide style as its room paintings: fine gouache brushwork, restrained slate blues, earthy umber and "
+    "localized warm light. Show one small, slight young adventurer of ambiguous gender standing in three-quarter "
+    "view at the center of a landscape frame, head and feet in view. Beneath what is listed below they wear plain, "
+    "undecorated dark clothes. Show every listed worn and carried thing exactly as described, and add no other gear, "
+    "armor, weapons, jewelry, bags or capes. Behind the figure, loosely suggest the room named below in soft, "
+    "unfocused shapes without distinct props. No lettering anywhere, including book covers, and no icons or "
+    "interface elements."
+)
+
+
+def _image_request(model, prompt):
+    return {"model": model, "prompt": prompt, "size": "1536x1024", "quality": "low", "output_format": "jpeg", "n": 1}
 
 
 @dataclass(frozen=True)
@@ -37,6 +51,7 @@ class Scene:
     items: tuple
     scenery: tuple
     exits: tuple
+    kind = "room"
 
     @classmethod
     def from_room(cls, room):
@@ -51,7 +66,41 @@ class Scene:
             f"Visible loose items: {', '.join(self.items) or 'none'}. "
             f"Landmarks: {', '.join(self.scenery) or 'none'}. Visible exits: {', '.join(self.exits) or 'none'}."
         )
-        return {"model": model, "prompt": prompt, "size": "1536x1024", "quality": "low", "output_format": "jpeg", "n": 1}
+        return _image_request(model, prompt)
+
+
+@dataclass(frozen=True)
+class Portrait:
+    """The player as they look at one moment: what they have on and what they carry."""
+
+    place: str
+    description: str
+    worn: tuple  # (item name, how it is worn, item description)
+    carried: tuple  # (item name, item description)
+    exits: tuple
+    kind = "portrait"
+    name = "Your portrait"
+    scenery = ()
+
+    @classmethod
+    def of(cls, game, room, description):
+        """Capture the player's current outfit from the game state."""
+        worn = tuple((item.name, how, item.description[:240]) for item, how in game.wearing())
+        carried = tuple((item.name, item.description[:240]) for item in game.inventory if item.name not in game.worn)
+        return cls(room.name, description, worn, carried, tuple(room.visible_exits))
+
+    @property
+    def items(self):
+        """Name everything on the figure for the read-only companion."""
+        return tuple(name for name, *_ in (*self.worn, *self.carried))
+
+    def request(self, model):
+        """Build the image request used both for generation and cache identity."""
+        worn = " ".join(f"{name}: {how} ({look})" for name, how, look in self.worn) or "nothing from the castle."
+        carried = " ".join(f"{name}: {look}" for name, look in self.carried) or "nothing; their hands are empty."
+        prompt = (f"{PORTRAIT_STYLE}\nRoom behind the figure: {self.place}\nWorn: {worn}\n"
+                  f"Carried in hand or at the belt: {carried}")
+        return _image_request(model, prompt)
 
 
 def generate_image(payload):
@@ -102,8 +151,14 @@ class RoomCompanion:
         self._worker.start()
 
     def show(self, room, *, description=None):
-        """Publish a scene immediately, coalescing duplicate and superseded requests."""
-        scene = Scene.from_room(room)
+        """Publish a room immediately, coalescing duplicate and superseded requests."""
+        self._present(Scene.from_room(room), description)
+
+    def show_portrait(self, portrait):
+        """Replace the room with the player's portrait until the next scene is shown."""
+        self._present(portrait, portrait.description)
+
+    def _present(self, scene, description):
         with self._condition:
             if self._closed:
                 return
@@ -133,7 +188,7 @@ class RoomCompanion:
                 return {"status": "waiting"}
             ready = self._status in ("ready", "cached")
             return {
-                "key": self._key, "name": scene.name, "description": self._description,
+                "kind": scene.kind, "key": self._key, "name": scene.name, "description": self._description,
                 "items": scene.items, "scenery": scene.scenery, "exits": scene.exits, "model": self.model,
                 "status": self._status, "error": self._error, "image": f"/art/{self._key}.jpg" if ready else None,
             }

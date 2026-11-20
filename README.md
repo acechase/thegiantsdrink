@@ -55,11 +55,13 @@ Play in a browser with the room illustration, story, and command input on one pa
 ./.venv/bin/python main.py --browser
 ```
 
-The game opens a tab and prints its local address. Click a detail to examine it, click an exit to move, or type an action in your own words. Inventory shows what you carry. The journal keeps your commands, outcomes, and chapter arrivals. You can draft your next action while a turn is running.
+The game opens a tab and prints its local address. Click a detail to examine it, click an exit to move, or type an action in your own words. The Trail row lists your last four moves. Inventory shows what you carry and marks what you have on. The journal keeps your commands, outcomes, and chapter arrivals. You can draft your next action while a turn is running.
 
 Refresh or reopen the printed address to rejoin the same game. All tabs at that address share one player. Typing `quit` ends play and leaves the journal available. Press Ctrl+C in the launching terminal to stop the server. Progress lasts for the lifetime of that Python process.
 
 On Windows use `.venv\Scripts\python.exe main.py --browser`. For terminal play on macOS or Linux, run `./.venv/bin/python main.py`. Add `--visuals` for a separate read-only room companion.
+
+Anything you put on, such as a helm, a tapestry worn as a cloak, or a chain looped like a necklace, stays on until you take it off or set it down. Type `look at yourself` to see a full-length portrait of your character in place of the room illustration. Your next action brings the room back. Each distinct outfit is painted once and cached.
 
 Both browser modes listen on `127.0.0.1`. The game generates and caches illustrations in `.room-art/` for each distinct visible scene. Taking an item or opening a passage can trigger another image request. Revisiting a cached scene reuses its art. Browser play shows a sketch of the exits while an illustration is pending or unavailable. You can continue playing or retry a failed illustration.
 
@@ -81,6 +83,7 @@ Anything the game describes is something you can act on, whether it appears in t
 | `use <item> on <object>` | Try a carried tool on something here |
 | `attack <target>` | Attack something |
 | `remember` | Recall lessons from previous lives |
+| `look at yourself` | Describe what you have on and carry; in the browser, paint your portrait |
 | `inventory` | Check your inventory |
 | `help` | Show available commands |
 | `quit` / `exit` | Leave the game |
