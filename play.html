@@ -52,7 +52,7 @@
     <form id="form">
       <label class="sr" for="command">Your next action</label>
       <input id="command" placeholder="What do you do?" maxlength="2000" autocomplete="off" enterkeyhint="send">
-      <button id="act" type="submit" disabled>Act <span aria-hidden="true">↵</span></button>
+      <button id="act" type="submit" disabled><span class="spinner" aria-hidden="true"></span><span id="act-label">Act</span><span id="act-key" aria-hidden="true">↵</span></button>
     </form>
     <div id="suggestions"></div>
     <p id="saved"></p>

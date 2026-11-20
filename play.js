@@ -4,7 +4,7 @@ const el = id => document.getElementById(id);
 const arrows = {north: "↑", south: "↓", east: "→", west: "←", up: "↗", down: "↙"};
 const title = text => text[0].toUpperCase() + text.slice(1);
 let state, connected = false, posting = false, acknowledged = false;
-let drawer = "", drawerTrigger, journalRequest = 0, oldest = null;
+let drawer = "", drawerTrigger, journalRequest = 0, oldest = null, workingSince = null;
 let imageURL = null, activeImage = null, entrySignature = "", avatarURL = null, avatarLoading = null;
 
 function remember(key, value) {
@@ -149,13 +149,26 @@ function renderEntry(entry) {
   else if (latestEvent) text("announcement", latestEvent.text);
 }
 function controls() {
-  const busy = !connected || !state || Boolean(outbox || state.pending || state.room.ended);
-  el("act").disabled = busy;
-  el("command").disabled = Boolean(state?.room.ended);
+  const ended = Boolean(state?.room.ended);
+  const working = connected && Boolean(state) && !ended && Boolean(outbox || state.pending);
+  const busy = !connected || !state || working || ended;
+  if (!working) workingSince = null;
+  else if (workingSince === null) workingSince = Date.now();
+  const act = el("act");
+  act.disabled = busy;
+  act.classList.toggle("working", working);
+  act.setAttribute("aria-busy", String(working));
+  text("act-label", working ? "Thinking…" : ended ? "Ended" : "Act");
+  el("act-key").hidden = working || ended;
+  el("command").disabled = ended;
   for (const btn of document.querySelectorAll("[data-command]")) btn.disabled = busy;
-  if (state?.room.ended) text("activity", "This session has ended. Your journal is still available.");
+  if (ended) text("activity", "This session has ended. Your journal is still available.");
   else if (!connected) text("activity", state ? "Connection lost. Reconnecting…" : "Connecting to the game…");
-  else text("activity", state.pending?.activity || (outbox ? "Sending your action…" : ""));
+  else {
+    const seconds = workingSince ? Math.floor((Date.now() - workingSince) / 1000) : 0;
+    const step = state.pending?.activity || (outbox ? "Sending your action…" : "");
+    text("activity", step && seconds >= 3 ? step + " · " + seconds + "s" : step);
+  }
 }
 
 function renderBag() {
