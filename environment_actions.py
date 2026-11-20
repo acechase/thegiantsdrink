@@ -22,6 +22,10 @@ For alter/take/detach, also supply description: the subject's appearance after t
 For detach include piece (a plain noun phrase without articles or counts, e.g. "tapestry" or "gold coins")
 and piece_description. For place include placement: a short room sentence about the placed item.
 For observe do not claim a change of state. Do not change exits, teleport, change quest flags, or award victory.
+If a challenge is supplied, effect overcome means the attempt genuinely gets the player past challenge.obstacle.
+Its planned_solutions are examples, not the only answers: accept an unplanned approach only when it is at least as
+clever and as physically plausible. Anchor overcome on the obstacle, and supply room_after and description.
+Never take or remove the obstacle; use overcome or observe instead.
 Stay in-world. Describe sensory results briefly, without giving real-world instructions."""
 
 
@@ -53,6 +57,12 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
         "attempt": command, "subject": reference, "subject_description": subject.description if subject else None,
         "held_tool": tool.name if tool else None,
     }
+    challenge, obstacle = game.active_challenge(room)
+    if challenge:
+        inputs["challenge"] = {
+            "obstacle": challenge.obstacle, "barrier": challenge.barrier, "bars_the_way": challenge.blocks,
+            "planned_solutions": [f"{approach} with the {tool}" for tool, approach, _ in challenge.solutions],
+        }
     raw = complete(
         PROMPT, json.dumps(inputs), max_tokens=650, json_output=True, purpose="environmental interaction", report=report
     )
@@ -63,10 +73,21 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
     if not isinstance(data, dict):
         return fallback
     anchor, reply, effect = _field(data, "anchor", 100), _field(data, "reply"), _field(data, "effect", 20)
-    if not anchor or not reply or effect not in ("observe", "alter", "take", "detach", "remove", "place"):
+    effects = ("observe", "alter", "take", "detach", "remove", "place", *(("overcome",) if challenge else ()))
+    if not anchor or not reply or effect not in effects:
         return fallback
     # A synonym can resolve to quoted scenery, but an invented anchor cannot become loot.
     grounded = find_object(anchor, objects) or room.landmark(anchor)
+    if obstacle is not None and grounded is obstacle and effect in ("overcome", "take", "remove"):
+        # The obstacle can be outwitted with any carried tool, but never carried off or erased.
+        base = _field(data, "room_after")
+        if not base:
+            return fallback
+        if report:
+            report("[Procedural] Clearing the way onward.")
+        return game.overcome(room, reply, room_after=base, obstacle_description=_field(data, "description"))
+    if effect == "overcome":
+        return fallback  # Only the obstacle itself can be overcome.
     if grounded is None or (subject in objects and grounded is not subject):
         return fallback
     subject = subject or grounded

@@ -10,6 +10,7 @@ A text-based adventure game where you explore a castle, collect items, and face 
 - **Natural language commands** — type freely; an LLM parses your intent
 - **15 rooms** with rich, atmospheric descriptions inspired by Ender's Game's Mind Game
 - **3 paths to victory** — aggressor, strategist, or explorer
+- **Endless arcs after the giant** — the world keeps growing, one AI-planned challenge arc at a time
 - **Adaptive difficulty** — the game watches how you play and adjusts the world accordingly
 - **Player profiling** — the behavior analyzer tracks your play style and tailors content
 
@@ -80,6 +81,18 @@ Anything the game describes is something you can act on, whether it appears in t
 | `inventory` | Check your inventory |
 | `help` | Show available commands |
 | `quit` / `exit` | Leave the game |
+
+## After the giant
+
+Defeating the giant doesn't end the game. A crack opens behind the empty throne, and the game plans the first of an endless series of **arcs**: AI-generated regions of three to six rooms, each ending in an obstacle that bars the way onward.
+
+Each arc is planned in full before you enter it. The plan covers the rooms, the items in them, the obstacle, and two or three intended ways past it. At least one of those uses an item placed in the arc, and others may use things you already carry. The planner sees your play style, your recent commands and a chronicle of what you've done. It tries to design a challenge your habits haven't tested yet. If you've relied on force, force alone may fail here.
+
+The game checks each plan before you can play it. Every room must be reachable. The obstacle must be a real object in the arc. At least one solution must use an item the arc provides. Room and item names can't clash with existing ones. If a plan fails these checks, the planner gets the reason and tries again.
+
+When you reach the obstacle, an intended solution works directly, for example `use kite on gap`, or the same thing in your own words. You can also try something the plan didn't anticipate. The model accepts it if it's at least as clever and as physically plausible as the intended solutions. Once you're past, the game shows a glimpse of what lies beyond. It then plans the next arc to begin there and opens the way. Earlier arcs stay connected, so you can always walk back.
+
+Planning an arc takes one longer request, around 40 seconds with `gpt-6-luna` at medium effort. If the request fails, the way onward shows grey mist. Walk that way again to retry. Rooms in an arc use their planned descriptions, so moving between them needs no further narration requests.
 
 ## Running Tests
 

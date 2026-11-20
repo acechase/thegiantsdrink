@@ -27,6 +27,8 @@ class GameState:
         self.potion_active = False
         self.book_knowledge = False
         self.door_unlocked = False
+        self.history = []
+        self.breakthrough = None  # A room whose obstacle the player has just overcome.
 
     def move(self, direction, world_map):
         """Move the player in a given direction if the exit exists.
@@ -37,6 +39,9 @@ class GameState:
         str: Description of the move result or error message.
         """
         room = world_map[self.current_room]
+        challenge = room.challenge
+        if challenge and not challenge.resolved and direction == challenge.blocks:
+            return challenge.barrier
         if direction in room.exits:
             target_room = room.exits[direction]
             # Victory Chamber requires unlocked door
@@ -105,6 +110,24 @@ class GameState:
         fallback = f"You try the {tool.name} on the {obj.name}. Nothing happens." if tool and obj else None
         return resolve_environment(self, room, command, reference, tool=tool, report=report, fallback=fallback)
 
+    @staticmethod
+    def active_challenge(room):
+        """Return a room's unresolved obstacle and its scenery object, if any."""
+        challenge = room.challenge
+        if not challenge or challenge.resolved:
+            return None, None
+        return challenge, find_object(challenge.obstacle, room.scenery)
+
+    def overcome(self, room, outcome, *, room_after=None, obstacle_description=None):
+        """Get past a room's obstacle and leave the room changed for good."""
+        challenge, obstacle = self.active_challenge(room)
+        challenge.resolved = True
+        if obstacle:
+            obstacle.description = obstacle_description or challenge.obstacle_after
+        room.rewrite(room_after or challenge.room_after)
+        self.breakthrough = room
+        return outcome
+
     def use_on(self, tool_name, target_name, world_map, difficulty=1.0, *, command=None, report=None):
         """Resolve an attempted tool interaction against the current world."""
         room = world_map[self.current_room]
@@ -115,6 +138,9 @@ class GameState:
         if not target:
             return self.investigate(target_name, world_map, command, tool=tool, report=report)
 
+        challenge, obstacle = self.active_challenge(room)
+        if obstacle is target and challenge.outcome(tool.name):
+            return self.overcome(room, challenge.outcome(tool.name))
         passage = room.passage
         if passage and (tool.name, target.name) == (passage.tool, passage.landmark):
             if room.passage_open:
@@ -147,6 +173,11 @@ class GameState:
         item = find_object(item_name, self.inventory)
         if not item:
             return "You can't use that item or it's not in your inventory."
+        if world_map is not None:
+            room = world_map[self.current_room]
+            challenge, _ = self.active_challenge(room)
+            if challenge and challenge.outcome(item.name):
+                return self.overcome(room, challenge.outcome(item.name))
         if item.name == "rusty sword":
             prompt = "You're holding the rusty sword. What would you like to use it on?"
             return self._improvise(item, prompt, world_map, command, report)
@@ -200,6 +231,8 @@ class GameState:
 
             str: Combat result message or resource requirement message.
         """
+        if self.giant_defeated and "giant" in target.lower():
+            return "The giant is gone. Only a drift of grey dust remains."
         if self.current_room == "Giant's Hall" and "giant" in target.lower():
             has_sword = any("rusty sword" in item.name for item in self.inventory)
 

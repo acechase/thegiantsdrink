@@ -15,6 +15,7 @@ from command_parser import parse_command
 from content_generator import ContentGenerator
 from game_world import find_object, noun, world_map
 from room_companion import open_companion
+from saga import CASTLE_HORIZON, Saga
 from simulation_engine import GameState
 
 HELP_TEXT = """Available commands:
@@ -56,12 +57,21 @@ def _quiet_typeahead():
         termios.tcsetattr(fd, termios.TCSANOW, previous)
 
 
+def _extend(saga, rooms, game_state, profile_summary, report):
+    """Plan the arc beyond the open way and say whether it is ready."""
+    _, direction = saga.gate
+    if saga.plan_next(rooms, game_state, profile_summary=profile_summary, report=report):
+        return f"A way {direction} has opened."
+    return f"To the {direction} there is only grey mist so far. Go {direction} when you want to look again."
+
+
 def main(*, visuals=False):
     """Run the main game loop for The Giant's Drink text adventure.
 
     Initializes GameState, behavior analyzer, adaptation AI, and content generator.
-    Processes player commands until the giant is defeated. Continuously adapts
-    difficulty and world state based on player profile.
+    Processes player commands until the player quits. Defeating the giant opens an
+    endless chain of AI-planned arcs. Continuously adapts difficulty and world state
+    based on player profile.
 
 
     """
@@ -85,6 +95,7 @@ def _play(viewer):
     behavior_analyzer = BehaviorAnalyzer()
     adaptation_ai = AdaptationAI()
     content_gen = ContentGenerator()
+    saga = Saga()
     report = partial(print, flush=True)
 
     print("Welcome to The Giant's Drink!")
@@ -94,12 +105,17 @@ def _play(viewer):
     if viewer:
         viewer.show(rooms[game_state.current_room])
 
-    while not game_state.giant_defeated:
-        command = input("\n> ").strip()
+    while True:
+        try:
+            command = input("\n> ").strip()
+        except EOFError:
+            print("\nThanks for playing The Giant's Drink!")
+            return
         if not command:
             continue
 
         with _quiet_typeahead():
+            game_state.history.append(command)
             previous_room = game_state.current_room
             room = rooms[previous_room]
             action, target = parse_command(command, room, game_state.inventory, report=report)
@@ -109,7 +125,15 @@ def _play(viewer):
             else:
                 report("[Procedural] Using the unknown-command response.")
             if action == "move" and target:
-                result = game_state.move(target, rooms)
+                waiting = saga.gate == (previous_room, target)
+                if waiting:
+                    waiting = not saga.plan_next(
+                        rooms, game_state, profile_summary=behavior_analyzer.get_profile_summary(), report=report
+                    )
+                if waiting:
+                    result = "Only grey mist lies that way. The next part of the world is still taking shape."
+                else:
+                    result = game_state.move(target, rooms)
                 if game_state.current_room != previous_room:
                     behavior_analyzer.update_profile("move")
             elif action == "take" and target:
@@ -165,9 +189,29 @@ def _play(viewer):
             adaptation_ai.adapt_world(rooms, profile, profile_summary)
 
             print(result)
+            if game_state.giant_defeated and not saga.started:
+                print("\nCongratulations! You have defeated the giant.")
+                print("But the game does not end here.\n")
+                saga.begin(rooms, result)
+                print(CASTLE_HORIZON)
+                print(_extend(saga, rooms, game_state, profile_summary, report))
+            if game_state.breakthrough:
+                gate_room, game_state.breakthrough = game_state.breakthrough, None
+                arc = saga.arcs[gate_room.arc - 1]
+                saga.record(f"{arc.title}: {result}")
+                saga.open_way(gate_room, gate_room.challenge.blocks, arc.horizon)
+                behavior_analyzer.update_profile("discover")
+                print(f"\n{arc.horizon}")
+                print(_extend(saga, rooms, game_state, profile_summary, report))
             if viewer:
                 viewer.show(rooms[game_state.current_room])
-            if game_state.current_room != previous_room:
+            if game_state.current_room != previous_room and rooms[game_state.current_room].generated:
+                banner = saga.arrive(game_state.current_room)
+                if banner:
+                    print(f"\n{banner}\n")
+                report("[Cached AI] Using the planned room description.")
+                print(game_state.get_current_description(rooms))
+            elif game_state.current_room != previous_room:
                 room = rooms[game_state.current_room]
                 description = content_gen.generate_description(
                     room.name,
@@ -179,8 +223,6 @@ def _play(viewer):
                 )
                 room.remember(description)
                 print(game_state.get_current_description(rooms, description=description))
-
-    print("\nCongratulations! You have defeated the giant and won the game!")
 
 
 if __name__ == "__main__":

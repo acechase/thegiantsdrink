@@ -50,6 +50,23 @@ class Discovery:
     detail: str
 
 
+@dataclass
+class Challenge:
+    """An obstacle that bars one direction until the player finds a way past it."""
+
+    obstacle: str
+    blocks: str
+    barrier: str
+    solutions: tuple  # (tool, approach, outcome) triples planned with the arc
+    room_after: str
+    obstacle_after: str
+    resolved: bool = False
+
+    def outcome(self, tool):
+        """Return the planned result of using a tool on the obstacle, if the plan includes it."""
+        return next((outcome for name, _, outcome in self.solutions if name == tool), None)
+
+
 class Room:
     """A location in the game world that the player can visit.
 
@@ -60,7 +77,7 @@ class Room:
         exits: Dict mapping direction strings to destination room names.
     """
 
-    def __init__(self, name, description, items=None, exits=None, *, scenery=(), passage=None):
+    def __init__(self, name, description, items=None, exits=None, *, scenery=(), passage=None, challenge=None):
         """Initialize a Room with a name, description, items, and exit directions.
 
         name (str): Unique name of the room.
@@ -75,6 +92,9 @@ class Room:
         self.exits = exits if exits else {}
         self.scenery = list(scenery)
         self.passage = passage
+        self.challenge = challenge
+        self.generated = False
+        self.arc = 0
         self.discoveries = {}
         self.folded = set()
         self.seen_details = []

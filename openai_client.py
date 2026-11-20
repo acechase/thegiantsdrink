@@ -16,6 +16,7 @@ def complete(
     json_output: bool = False,
     purpose: str = "text generation",
     report: Optional[Callable[[str], None]] = None,
+    read_timeout: Optional[float] = None,
 ) -> Optional[str]:
     """Request a text completion from OpenAI, returning None if it is unavailable."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -47,7 +48,7 @@ def complete(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json=payload,
-            timeout=(15, 180 if allow_reasoning else 15),
+            timeout=(15, read_timeout or (180 if allow_reasoning else 15)),
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
