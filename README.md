@@ -62,7 +62,7 @@ Refresh or reopen the printed address to rejoin the same game. All tabs at that 
 
 On Windows use `.venv\Scripts\python.exe main.py --browser`. For terminal play on macOS or Linux, run `./.venv/bin/python main.py`. Add `--visuals` for a separate read-only room companion.
 
-Anything you put on, such as a helm, a tapestry worn as a cloak, or a chain looped like a necklace, stays on until you take it off or set it down. Type `look at yourself` to see a full-length portrait of your character in place of the room illustration. Your next action brings the room back. Each distinct outfit is painted once and cached.
+Anything you put on, such as a helm, a tapestry worn as a cloak, or a chain looped like a necklace, stays on until you take it off or set it down. A character card beside the room name shows your character as they look now, with your current life. It repaints whenever you put something on, take it off, pick something up or put it down, and keeps the previous painting until the new one is ready. Moving between rooms never repaints it. Select the card, or type `look at yourself`, to see a full-length portrait in place of the room illustration. Your next action brings the room back. Each distinct outfit is painted once and cached.
 
 Both browser modes listen on `127.0.0.1`. The game generates and caches illustrations in `.room-art/` for each distinct visible scene. Taking an item or opening a passage can trigger another image request. Revisiting a cached scene reuses its art. Browser play shows a sketch of the exits while an illustration is pending or unavailable. You can continue playing or retry a failed illustration.
 

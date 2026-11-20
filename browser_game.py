@@ -10,7 +10,7 @@ from copy import deepcopy
 from http.server import ThreadingHTTPServer
 
 from playthrough import render
-from room_companion import DEFAULT_IMAGE_MODEL, HERE, RoomCompanion, ViewerHandler, launch_tab
+from room_companion import DEFAULT_IMAGE_MODEL, HERE, Avatar, RoomCompanion, ViewerHandler, launch_tab
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +18,14 @@ logger = logging.getLogger(__name__)
 class BrowserGame:
     """Serialize commands and publish completed turns separately from in-flight activity."""
 
-    def __init__(self, session, viewer, *, journal=None, store=None):
-        """Start the command worker and publish the opening scene, continuing a saved journal if given."""
+    def __init__(self, session, viewer, *, avatar=None, journal=None, store=None):
+        """Start the command worker and publish the opening scene, continuing a saved journal if given.
+
+        avatar, when given, is a second illustrator that keeps the player's character card current.
+        """
         self.session = session
         self.viewer = viewer
+        self.avatar = avatar
         self.store = store
         self.saved = {"id": store.ident, "turn": len(journal or [])} if store and journal else None
         self.condition = threading.Condition()
@@ -31,6 +35,7 @@ class BrowserGame:
         self.receipts = {}
         self.room = session.public_state()
         session.show(self.viewer)
+        self._dress(session)
         self.worker = threading.Thread(target=self._work, name="game-turns", daemon=True)
         self.worker.start()
 
@@ -69,8 +74,12 @@ class BrowserGame:
             return {
                 "turn": len(self.journal), "room": self.room, "art": self.viewer.snapshot(),
                 "latest": self.journal[-1] if self.journal else None, "pending": self.pending,
-                "save": self.saved,
+                "save": self.saved, "avatar": self.avatar.snapshot() if self.avatar else None,
             }
+
+    def _dress(self, session):
+        if self.avatar:
+            self.avatar.present(Avatar.of(session.game))
 
     def playthrough(self):
         """Render every turn so far as a shareable page."""
@@ -124,6 +133,7 @@ class BrowserGame:
                 else:
                     self.session, self.room = session, room
                     session.show(self.viewer)
+                    self._dress(session)
                 art = self.viewer.snapshot()
                 entry["art"] = {"key": art["key"], "kind": art["kind"]} if art.get("key") else None
                 self.journal.append(entry)
@@ -152,6 +162,8 @@ class BrowserGame:
             self.closed = True
             self.condition.notify_all()
         self.viewer.close()
+        if self.avatar:
+            self.avatar.close()
 
 
 class PlayHandler(ViewerHandler):
@@ -214,7 +226,8 @@ def play_server(session, cache_dir, model, *, journal=None, store=None):
               "/play.css": ("text/css; charset=utf-8", (HERE / "play.css").read_bytes())}
     with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
         server.viewer = RoomCompanion(cache_dir, model)
-        server.game = BrowserGame(session, server.viewer, journal=journal, store=store)
+        server.avatar = RoomCompanion(cache_dir, model)
+        server.game = BrowserGame(session, server.viewer, avatar=server.avatar, journal=journal, store=store)
         server.page, server.assets = page, assets
         try:
             yield server

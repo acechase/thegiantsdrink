@@ -240,3 +240,51 @@ def test_portrait_replaces_the_room_art_for_one_turn(game):
     state = submit(game, "examine shelf")
     assert state["art"]["kind"] == "room" and state["art"]["name"] == "Starting Room"
     assert submit(game, "me")["art"]["key"] == portrait_key  # An unchanged outfit reuses its painting.
+
+
+def test_character_card_follows_the_outfit_but_not_the_room(tmp_path, monkeypatch):
+    requests, outage = [], [True]
+
+    def illustrate(payload):
+        requests.append(payload)
+        if outage[0] and "character card" in payload["prompt"] and "iron helm" in payload["prompt"]:
+            raise RuntimeError("The image service could not be reached. Try again in a moment.")
+        return b"art"
+
+    monkeypatch.setattr("content_generator.ContentGenerator.generate_description",
+                        lambda self, name, *a, **kw: kw["description"])
+    with running_server(tmp_path, monkeypatch) as server:
+        monkeypatch.setattr(room_companion, "generate_image", illustrate)
+        game, port = server.game, server.server_port
+
+        def card():
+            with server.avatar._condition:
+                assert server.avatar._condition.wait_for(
+                    lambda: server.avatar.snapshot()["status"] in ("ready", "cached", "error"), timeout=3)
+            return game.snapshot()["avatar"]
+
+        plain = card()
+        assert plain["kind"] == "avatar" and plain["items"] == () and plain["image"]
+        client = HTTPConnection("127.0.0.1", port, timeout=2)
+        client.request("GET", plain["image"], headers={"Host": f"127.0.0.1:{port}"})
+        assert client.getresponse().read() == b"art"
+        submit(game, "go north")
+        assert card()["key"] == plain["key"]  # Walking around never repaints the card.
+        submit(game, "south")
+        submit(game, "take candle")
+        holding = card()
+        assert holding["key"] != plain["key"] and holding["items"] == ("candle",)
+        cards = [r for r in requests if "character card" in r["prompt"]]
+        assert len(cards) == 1 and "candle" in cards[0]["prompt"]  # Only the new outfit was painted.
+        prompt = next(r for r in requests if "candle" in r["prompt"] and "character card" in r["prompt"])
+        assert prompt["size"] == "1024x1536" and "Room" not in prompt["prompt"]
+        for command in ("take sword", "use sword on wall", "down", "take helm", "use helm"):
+            submit(game, command)
+        failed = card()
+        assert failed["status"] == "error" and game.snapshot()["room"]["worn"] == ["iron helm"]
+        outage[0] = False
+        client = HTTPConnection("127.0.0.1", port, timeout=2)
+        client.request("POST", "/retry/" + failed["key"],
+                       headers={"Host": f"127.0.0.1:{port}", "Origin": f"http://127.0.0.1:{port}"})
+        assert client.getresponse().status == 204
+        assert card()["status"] == "ready"

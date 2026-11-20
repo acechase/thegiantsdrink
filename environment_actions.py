@@ -38,6 +38,16 @@ def _field(data, key, limit=2000):
     return value.strip() if isinstance(value, str) and len(value) <= limit else ""
 
 
+def _ground(anchor, objects):
+    """Resolve the model's anchor, letting descriptive words it borrowed from the prose ("faded tapestries") fall away."""
+    words = noun(anchor).split()
+    for start in range(len(words)):
+        found = find_object(" ".join(words[start:]), objects)
+        if found:
+            return found
+    return None
+
+
 def _engine_sentences(room):
     """Room text the engine appends itself: loose items and an opened hidden route."""
     sentences = [obj.room_text for obj in room.items if obj.room_text]
@@ -85,7 +95,7 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
     if not anchor or not reply or effect not in effects:
         return fallback
     # A synonym can resolve to quoted scenery, but an invented anchor cannot become loot.
-    grounded = find_object(anchor, objects) or room.landmark(anchor)
+    grounded = _ground(anchor, objects) or room.landmark(anchor)
     if grounded and room.trial and grounded.name in room.trial.fixtures and effect != "observe":
         return grounded.description
     if obstacle is not None and grounded is obstacle and effect in ("overcome", "take", "remove"):

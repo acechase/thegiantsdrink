@@ -26,20 +26,48 @@ STYLE = (
     "containers, rugs, props, creatures or decorations that the text does not mention. Leave out unseen "
     "destinations, the player, lettering, icons and interface elements."
 )
+# The same character in every portrait, so repaintings read as one person changing outfits.
+PLAYER_LOOK = (
+    "one small, slight child of about ten, gender left ambiguous, with a mop of dark brown hair, a pale freckled "
+    "face and steady grey eyes. Beneath what is listed below they wear a plain charcoal tunic, dark trousers and "
+    "worn brown boots"
+)
+PAINTING = (
+    "in the same illustrated field-guide style as the game's room paintings: fine gouache brushwork, restrained "
+    "slate blues, earthy umber and localized warm light"
+)
+OUTFIT_RULES = (
+    "Show every listed worn and carried thing exactly as described, and add no other gear, armor, weapons, jewelry, "
+    "bags or capes. No lettering anywhere, including book covers, and no icons or interface elements."
+)
 PORTRAIT_STYLE = (
-    "Full-length character portrait for a surreal fairy-tale castle exploration game, in the same illustrated "
-    "field-guide style as its room paintings: fine gouache brushwork, restrained slate blues, earthy umber and "
-    "localized warm light. Show one small, slight young adventurer of ambiguous gender standing in three-quarter "
-    "view at the center of a landscape frame, head and feet in view. Beneath what is listed below they wear plain, "
-    "undecorated dark clothes. Show every listed worn and carried thing exactly as described, and add no other gear, "
-    "armor, weapons, jewelry, bags or capes. Behind the figure, loosely suggest the room named below in soft, "
-    "unfocused shapes without distinct props. No lettering anywhere, including book covers, and no icons or "
-    "interface elements."
+    f"Full-length character portrait for a surreal fairy-tale castle exploration game, {PAINTING}. Show {PLAYER_LOOK}, "
+    "standing in three-quarter view at the center of a landscape frame, head and feet in view. "
+    f"{OUTFIT_RULES} Behind the figure, loosely suggest the room named below in soft, unfocused shapes without "
+    "distinct props."
+)
+AVATAR_STYLE = (
+    f"Full-length character card for a surreal fairy-tale castle exploration game, {PAINTING}. Show {PLAYER_LOOK}, "
+    "standing in three-quarter view and filling a tall frame, head and feet in view. "
+    f"{OUTFIT_RULES} Set the figure against a plain, softly mottled parchment-and-slate wash with no setting."
 )
 
 
-def _image_request(model, prompt):
-    return {"model": model, "prompt": prompt, "size": "1536x1024", "quality": "low", "output_format": "jpeg", "n": 1}
+def _image_request(model, prompt, size="1536x1024"):
+    return {"model": model, "prompt": prompt, "size": size, "quality": "low", "output_format": "jpeg", "n": 1}
+
+
+def _outfit(game):
+    """Return what the player wears (name, how, look) and carries (name, look) right now."""
+    worn = tuple((item.name, how, item.description[:240]) for item, how in game.wearing())
+    carried = tuple((item.name, item.description[:240]) for item in game.inventory if item.name not in game.worn)
+    return worn, carried
+
+
+def _outfit_prompt(worn, carried):
+    worn = " ".join(f"{name}: {how} ({look})" for name, how, look in worn) or "nothing from the castle."
+    carried = " ".join(f"{name}: {look}" for name, look in carried) or "nothing; their hands are empty."
+    return f"Worn: {worn}\nCarried in hand or at the belt: {carried}"
 
 
 @dataclass(frozen=True)
@@ -85,9 +113,7 @@ class Portrait:
     @classmethod
     def of(cls, game, room, description):
         """Capture the player's current outfit from the game state."""
-        worn = tuple((item.name, how, item.description[:240]) for item, how in game.wearing())
-        carried = tuple((item.name, item.description[:240]) for item in game.inventory if item.name not in game.worn)
-        return cls(room.name, description, worn, carried, tuple(room.visible_exits))
+        return cls(room.name, description, *_outfit(game), tuple(room.visible_exits))
 
     @property
     def items(self):
@@ -96,11 +122,35 @@ class Portrait:
 
     def request(self, model):
         """Build the image request used both for generation and cache identity."""
-        worn = " ".join(f"{name}: {how} ({look})" for name, how, look in self.worn) or "nothing from the castle."
-        carried = " ".join(f"{name}: {look}" for name, look in self.carried) or "nothing; their hands are empty."
-        prompt = (f"{PORTRAIT_STYLE}\nRoom behind the figure: {self.place}\nWorn: {worn}\n"
-                  f"Carried in hand or at the belt: {carried}")
+        prompt = f"{PORTRAIT_STYLE}\nRoom behind the figure: {self.place}\n{_outfit_prompt(self.worn, self.carried)}"
         return _image_request(model, prompt)
+
+
+@dataclass(frozen=True)
+class Avatar:
+    """The always-visible character card: the player's outfit without a setting, so moving never repaints it."""
+
+    worn: tuple
+    carried: tuple
+    kind = "avatar"
+    name = "You"
+    description = ""
+    scenery = ()
+    exits = ()
+
+    @classmethod
+    def of(cls, game):
+        """Capture the player's current outfit from the game state."""
+        return cls(*_outfit(game))
+
+    @property
+    def items(self):
+        """Name everything on the figure."""
+        return tuple(name for name, *_ in (*self.worn, *self.carried))
+
+    def request(self, model):
+        """Build the image request used both for generation and cache identity."""
+        return _image_request(model, f"{AVATAR_STYLE}\n{_outfit_prompt(self.worn, self.carried)}", "1024x1536")
 
 
 def generate_image(payload):
@@ -152,13 +202,14 @@ class RoomCompanion:
 
     def show(self, room, *, description=None):
         """Publish a room immediately, coalescing duplicate and superseded requests."""
-        self._present(Scene.from_room(room), description)
+        self.present(Scene.from_room(room), description)
 
     def show_portrait(self, portrait):
         """Replace the room with the player's portrait until the next scene is shown."""
-        self._present(portrait, portrait.description)
+        self.present(portrait, portrait.description)
 
-    def _present(self, scene, description):
+    def present(self, scene, description=""):
+        """Show any illustratable scene: a room, a portrait or the character card."""
         with self._condition:
             if self._closed:
                 return
@@ -280,17 +331,22 @@ class ViewerHandler(BaseHTTPRequestHandler):
         elif self.path == "/state":
             self._send(200, "application/json", json.dumps(viewer.snapshot()).encode())
         else:
-            state = viewer.snapshot()
-            if self.path == state.get("image"):
-                try:
-                    data = (viewer.cache_dir / (state["key"] + ".jpg")).read_bytes()
-                except OSError:
-                    viewer.image_unavailable(state["key"])
-                    self.send_error(404)
+            for illustrator in self._illustrators():
+                state = illustrator.snapshot()
+                if self.path == state.get("image"):
+                    try:
+                        data = (illustrator.cache_dir / (state["key"] + ".jpg")).read_bytes()
+                    except OSError:
+                        illustrator.image_unavailable(state["key"])
+                        self.send_error(404)
+                        return
+                    self._send(200, "image/jpeg", data)
                     return
-                self._send(200, "image/jpeg", data)
-            else:
-                self.send_error(404)
+            self.send_error(404)
+
+    def _illustrators(self):
+        avatar = getattr(self.server, "avatar", None)
+        return [self.server.viewer, *([avatar] if avatar else [])]
 
     def _same_origin(self):
         return self.headers.get("Origin") == f"http://127.0.0.1:{self.server.server_port}"
@@ -299,7 +355,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
         """Accept retry clicks from this local viewer."""
         if not self._same_origin():
             self.send_error(403)
-        elif self.path.startswith("/retry/") and self.server.viewer.retry(self.path.removeprefix("/retry/")):
+        elif self.path.startswith("/retry/") and any(
+            illustrator.retry(self.path.removeprefix("/retry/")) for illustrator in self._illustrators()
+        ):
             self._send(204, "text/plain", b"")
         else:
             self.send_error(409)

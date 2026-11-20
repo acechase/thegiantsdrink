@@ -5,7 +5,7 @@ const arrows = {north: "↑", south: "↓", east: "→", west: "←", up: "↗",
 const title = text => text[0].toUpperCase() + text.slice(1);
 let state, connected = false, posting = false, acknowledged = false;
 let drawer = "", drawerTrigger, journalRequest = 0, oldest = null;
-let imageURL = null, activeImage = null, entrySignature = "";
+let imageURL = null, activeImage = null, entrySignature = "", avatarURL = null, avatarLoading = null;
 
 function remember(key, value) {
   try {
@@ -58,8 +58,7 @@ function renderRoom(room) {
   guide.onclick = () => openDrawer("guide", guide);
   const offers = room.offers.map(label => commandButton(label, label));
   const takes = room.items.slice(0, 3).map(n => commandButton("Take " + n, "take " + n));
-  const mirror = room.inventory.length ? [commandButton("Look at yourself", "look at yourself")] : [];
-  el("suggestions").replaceChildren(...offers, ...takes, ...mirror, guide);
+  el("suggestions").replaceChildren(...offers, ...takes, guide);
 }
 function renderArt(art) {
   const portrait = art.kind === "portrait";
@@ -92,6 +91,39 @@ function renderArt(art) {
     }
   };
   img.src = art.image;
+}
+function listed(names) {
+  return names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names.at(-1);
+}
+function renderAvatar(avatar) {
+  // The character card stays beside the room, except while the full portrait fills the illustration.
+  el("you").hidden = !avatar || state.art.kind === "portrait";
+  if (!avatar) return;
+  const room = state.room, worn = room.worn || [];
+  const carried = room.inventory.filter(name => !worn.includes(name));
+  const repainting = avatar.status === "queued" || avatar.status === "generating";
+  el("you").classList.toggle("repainting", repainting);
+  text("you-label", "Life " + room.life + (repainting ? " · repainting" : ""));
+  const summary = "You, on life " + room.life + ". Wearing " + (listed(worn) || "nothing from the castle") +
+    ". Carrying " + (listed(carried) || "nothing") + ". Select to look at yourself.";
+  if (el("avatar").getAttribute("aria-label") !== summary) {
+    el("avatar").setAttribute("aria-label", summary);
+    el("avatar").title = summary;
+  }
+  el("avatar-retry").hidden = avatar.status !== "error";
+  if (!avatar.image || avatar.image === avatarURL || avatar.image === avatarLoading) return;
+  // Keep the previous painting up until the new outfit has loaded.
+  avatarLoading = avatar.image;
+  const next = new Image();
+  next.onerror = () => { if (avatarLoading === avatar.image) avatarLoading = null; };
+  next.onload = () => {
+    if (state.avatar?.image !== avatar.image) return;
+    avatarURL = avatar.image;
+    el("avatar-img").src = avatar.image;
+    el("avatar-img").hidden = false;
+    el("avatar-wait").hidden = true;
+  };
+  next.src = avatar.image;
 }
 function renderSave(save) {
   el("saved").classList.toggle("failed", Boolean(save?.error));
@@ -260,6 +292,7 @@ async function poll() {
       if (drawer === "journal") loadJournal();
     }
     renderArt(state.art);
+    renderAvatar(state.avatar);
     renderSave(state.save);
     renderEntry(state.pending || state.latest);
     controls();
@@ -283,6 +316,11 @@ el("history").onclick = () => openDrawer("journal", el("history"));
 el("close").onclick = closeDrawer;
 el("older").onclick = () => loadJournal(true);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && drawer) closeDrawer(); });
+el("avatar-retry").onclick = async () => {
+  try {
+    await fetch("/retry/" + state.avatar.key, {method: "POST"});
+  } catch { text("notice", "Could not request the painting. Try again when connected."); }
+};
 el("retry").onclick = async () => {
   el("retry").disabled = true;
   text("notice", "");

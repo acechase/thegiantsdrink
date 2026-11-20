@@ -779,6 +779,15 @@ class TestEnvironment:
         game.investigate("tapestry", wmap, "fold the cloak over my arm")
         assert game.worn == {}
 
+    def test_anchor_with_descriptive_words_still_grounds_on_the_object(self, openai_api, game, wmap):
+        game.move("north", wmap)
+        openai_api.post(OPENAI_URL, json=adjudication(
+            effect="detach", anchor="Faded tapestries", reply="You drape one over your head like a hood.",
+            room_after=wmap["Corridor"].fixed_text(), description="One is missing.", piece="tapestry",
+            piece_description="A dusty tapestry.", worn="The tapestry hangs over your head like a hooded cloak."))
+        assert game.investigate("tapestries", wmap, "wear a tapestry like a hooded cloak").startswith("You drape")
+        assert game.worn == {"tapestry": "The tapestry hangs over your head like a hooded cloak."}
+
     def test_detail_mentioned_only_in_prose_can_be_taken(self, openai_api, game, wmap):
         for direction in ("north", "east"):
             game.move(direction, wmap)
