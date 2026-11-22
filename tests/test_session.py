@@ -164,3 +164,62 @@ def test_trail_names_the_last_four_arrivals_including_a_respawn(castle):
     castle.turn("south")
     assert castle.public_state()["trail"][-1] == {"way": "south", "room": "Upper Landing"}
     assert len(castle.game.trail) == 6
+
+
+def test_cutscene_captures_the_equipment_and_room_before_a_discovery(castle):
+    for command in ("take sword", "use sword on wall", "down", "take helm", "use helm", "up", "north", "north"):
+        castle.turn(command)
+    previous = castle.cutscene
+    castle.turn("up")
+    assert castle.cutscene is previous  # A death is not a successful technique.
+    castle.turn("follow the banister")
+    assert castle.room.name == "Upper Landing"
+    scene = castle.cutscene
+    prompt = scene.request("model")["prompt"]
+    assert "Setting: Great Staircase" in prompt and "stays level" in prompt
+    assert "Worn: iron helm" in prompt and "rusty sword" in prompt
+    assert "Action in progress: Edge up along the banister" in prompt
+    for command in ("drop sword", "down", "follow the banister"):
+        castle.turn(command)
+    assert castle.cutscene is scene and scene.request("model")["prompt"] == prompt
+
+
+def test_improvised_cutscene_requires_an_effect_and_ignores_paraphrased_repeats(castle, monkeypatch):
+    castle.turn("north")
+    interpret = '{"action":"interact","target":"tapestries"}'
+    scripted(monkeypatch, [
+        interpret, '{"effect":"observe","anchor":"tapestries","reply":"The weave ripples."}',
+        interpret, '{"effect":"alter","anchor":"tapestries","reply":"You fold the fabric above the arch.",'
+        '"room_after":"The corridor is clear.","description":"The fabric is folded."}',
+        interpret, '{"effect":"alter","anchor":"tapestries","reply":"You tuck a loose edge in the fold.",'
+        '"room_after":"The folds sit tight.","description":"The fabric is tucked in."}',
+    ])
+    castle.turn("test the wall hangings")
+    assert castle.cutscene is None
+    castle.turn("fold the tapestries above the arch")
+    scene = castle.cutscene
+    assert scene.action == "fold the tapestries above the arch"
+    assert scene.description == "You fold the fabric above the arch."
+    castle.turn("tidy the folded hangings")
+    assert castle.cutscene is scene and len(castle.discovered_actions) == 1
+
+
+def test_crafting_a_bag_and_packing_gear_is_procedural(castle, monkeypatch):
+    from game_world import Item
+
+    def no_model(*args, **kwargs):
+        pytest.fail("Called a model for a bag command")
+
+    monkeypatch.setattr("command_parser.complete", no_model)
+    monkeypatch.setattr("environment_actions.complete", no_model)
+    castle.game.inventory.append(Item("tapestry", "A length of sturdy cloth."))
+    castle.turn("take candle")
+    castle.turn("use the tapestry to make a bag for holding all our small items that we're carrying")
+    assert castle.cutscene is not None and castle.public_state()["inventory"] == ["tapestry bag", "candle"]
+    assert "Keep containers separate." in castle.turn("put bag in bag")[-1].text
+    castle.turn("put candle in bag")
+    castle.turn("drop bag")
+    castle.turn("take tapestry bag")
+    assert castle.public_state()["containers"] == {"tapestry bag": ["candle"]}
+    castle.turn("take candle out of bag")
+    assert castle.public_state()["inventory"] == ["tapestry bag", "candle"]

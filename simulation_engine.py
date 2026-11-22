@@ -2,7 +2,7 @@
 import re
 
 from environment_actions import resolve_environment
-from game_world import find_among, find_object, noun
+from game_world import OPPOSITE, find_among, find_object, noun
 from trials import FallingStairs, GiantTable
 
 
@@ -38,6 +38,11 @@ class GameState:
         self.worn = {}  # Carried item name -> how the player wears it, in one second-person sentence.
         self.trail = []  # (direction or "woke", room name) for each arrival, most recent last.
         self.breakthrough = None  # A room whose obstacle the player has just overcome.
+        self.discovery = None  # A successful technique from the current command.
+
+    def discover(self, kind, subject, action, *, tool=""):
+        """Record the grounded technique and how it should look in motion."""
+        self.discovery = kind, noun(subject), noun(tool), action
 
     def _arrive(self, how, room_name):
         self.current_room = room_name
@@ -51,6 +56,47 @@ class GameState:
         """Forget worn state for anything that has left the player's possession."""
         held = {item.name for item in self.inventory}
         self.worn = {name: how for name, how in self.worn.items() if name in held}
+
+    def carried_names(self):
+        """Include packed items when reserving the names of carried gear."""
+        return [item.name for held in self.inventory for item in (held, *(held.contents or ()))]
+
+    def make_tapestry_bag(self):
+        """Make a container from a tapestry the player has already taken."""
+        tapestry = find_object("tapestry", self.inventory)
+        if tapestry is None:
+            return "Take a tapestry first, then turn it into a bag."
+        if tapestry.contents is not None or any(item.name == "tapestry bag" for item in self.inventory):
+            return "You already have a tapestry bag."
+        self.convert_tapestry(tapestry)
+        tapestry.description = "A roomy fabric bag with knotted corners and a shoulder strap."
+        self.discover("craft", "tapestry", "Gather and knot the tapestry into a shoulder bag")
+        return "You knot the tapestry into a roomy bag. Try ‘put salt in bag’ with an item you’re carrying."
+
+    def convert_tapestry(self, tapestry):
+        """Preserve the item's identity and worn state when its name changes."""
+        worn = self.worn.pop(tapestry.name, None) if tapestry in self.inventory else None
+        tapestry.make_tapestry_bag()
+        if worn:
+            self.worn[tapestry.name] = "The tapestry bag hangs from your shoulders by its knotted strap."
+
+    def transfer_bag_item(self, item_name, bag_name, *, unpack=False):
+        """Move one item between the player's inventory and a carried bag."""
+        bag = find_object(bag_name, self.inventory)
+        if bag is None or bag.contents is None:
+            return f"You're not carrying a container called {bag_name}."
+        source, destination = (bag.contents, self.inventory) if unpack else (self.inventory, bag.contents)
+        item = find_object(item_name, source)
+        if item is None:
+            return (f"The {bag.name} doesn't contain {item_name}." if unpack else f"You're not carrying {item_name}.")
+        if item.contents is not None:
+            return "Keep containers separate."
+        source.remove(item)
+        self.worn.pop(item.name, None)
+        destination.append(item)
+        if unpack:
+            return f"You take the {item.name} out of the {bag.name}."
+        return f"You put the {item.name} in the {bag.name}."
 
     def appearance(self):
         """Describe what the player has on and in hand, without inventing anything else."""
@@ -172,6 +218,9 @@ class GameState:
         obj = find_object(reference, [*self.inventory, *room.items, *room.scenery])
         if not obj:
             return resolve_environment(self, room, command, reference, report=report)
+        if obj.contents is not None:
+            contents = ", ".join(item.name for item in obj.contents)
+            return f"{obj.description} Inside: {contents}." if contents else f"{obj.description} It is empty."
         passage = room.passage
         if room.passage_open and obj.name == passage.landmark:
             return passage.visible
@@ -188,6 +237,9 @@ class GameState:
                 return room.discoveries[obj.name]
             room.discoveries[obj.name] = obj.discovery.detail
             obj.description = f"{obj.description} {obj.discovery.detail}"
+            tool_name = tool.name if tool else ""
+            action = f"Probe the {obj.name} with the {tool_name}" if tool_name else f"Search the {obj.name} closely"
+            self.discover("search", obj.name, action, tool=tool_name)
             return f"{obj.discovery.response} {obj.discovery.detail}"
         fallback = f"You try the {tool.name} on the {obj.name}. Nothing happens." if tool and obj else None
         return resolve_environment(self, room, command, reference, tool=tool, report=report, fallback=fallback)
@@ -200,7 +252,7 @@ class GameState:
             return None, None
         return challenge, find_object(challenge.obstacle, room.scenery)
 
-    def overcome(self, room, outcome, *, room_after=None, obstacle_description=None):
+    def overcome(self, room, outcome, *, room_after=None, obstacle_description=None, tool="", action=""):
         """Get past a room's obstacle and leave the room changed for good."""
         challenge, obstacle = self.active_challenge(room)
         challenge.resolved = True
@@ -208,6 +260,7 @@ class GameState:
             obstacle.description = obstacle_description or challenge.obstacle_after
         room.rewrite(room_after or challenge.room_after)
         self.breakthrough = room
+        self.discover("overcome", challenge.obstacle, action or f"Overcome the {challenge.obstacle}", tool=tool)
         return outcome
 
     def use_on(self, tool_name, target_name, world_map, difficulty=1.0, *, command=None, report=None):
@@ -222,12 +275,21 @@ class GameState:
 
         challenge, obstacle = self.active_challenge(room)
         if obstacle is target and challenge.outcome(tool.name):
-            return self.overcome(room, challenge.outcome(tool.name))
+            approach = next(approach for name, approach, _ in challenge.solutions if name == tool.name)
+            return self.overcome(room, challenge.outcome(tool.name), tool=tool.name,
+                                 action=f"Use the {tool.name} on the {obstacle.name}. Approach: {approach}.")
         passage = room.passage
-        if passage and (tool.name, target.name) == (passage.tool, passage.landmark):
+        if passage and target.name == passage.landmark and tool.name == passage.tool:
             if room.passage_open:
                 return passage.visible
+            if room.generated:
+                if not any(item.name == passage.tool and item.puzzle_arc == room.arc for item in self.inventory):
+                    return target.description
+                destination = world_map[passage.destination]
+                destination.exits[OPPOSITE[passage.direction]] = room.name
             room.exits[passage.direction] = passage.destination
+            self.discover("open passage", target.name, f"Use the {tool.name} on the {target.name} to open the passage",
+                          tool=tool.name)
             return passage.reveal
         if target.name == "giant" and tool.name == "rusty sword":
             return self.attack("giant", difficulty, world_map=world_map)

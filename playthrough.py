@@ -37,8 +37,9 @@ ul { padding-left: 20px; }
 def _art(entry):
     art = entry.get("art")
     if isinstance(art, dict) and isinstance(art.get("key"), str) and ART_KEY.fullmatch(art["key"]):
-        return art["key"], art.get("kind") == "portrait"
-    return None, False
+        kind = art.get("kind")
+        return art["key"], kind if kind in ("portrait", "cutscene") else "room"
+    return None, "room"
 
 
 def _started(record):
@@ -68,7 +69,7 @@ def render(record, art_dir):
         body.append(f'<section class="turn"><p class="byline"><strong>{escape(command)}</strong>'
                     f'<span>{escape(str(entry.get("place", "")))}</span></p>{"".join(events)}</section>')
         # The illustration shows the scene as this turn left it, so it follows the turn's text.
-        key, portrait = _art(entry)
+        key, kind = _art(entry)
         if key and key != shown:
             if key not in images:
                 try:
@@ -77,8 +78,9 @@ def render(record, art_dir):
                     images[key] = None
             if images[key]:
                 shown = key
-                label = "The player's portrait" if portrait else f"The scene after “{command}”"
-                css = "art portrait" if portrait else "art"
+                label = {"portrait": "The player's portrait", "cutscene": f"The player in action during “{command}”"}.get(
+                    kind, f"The scene after “{command}”")
+                css = "art" if kind == "room" else f"art {kind}"
                 body.append(f'<div class="{css} a{key}" role="img" aria-label="{escape(label)}"></div>')
 
     life = record.get("life", 1) if isinstance(record.get("life"), int) else 1

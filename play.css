@@ -31,8 +31,12 @@ nav button, nav a { white-space: nowrap; }
 nav button:hover, nav a:hover, nav [aria-expanded=true], #close:hover, #older:hover, #retry:hover { background: #e7e3d6; }
 #count { color: var(--rust); font-variant-numeric: tabular-nums; }
 .spread { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: clamp(20px, 3.5vw, 48px); align-items: center; padding: 25px 0; }
-.plate { padding: 4px; border: 1px solid #858a77; background: #283b32; box-shadow: 0 2px 5px #30271722; }
+.plate { position: relative; padding: 4px; border: 1px solid #858a77; background: #283b32; box-shadow: 0 2px 5px #30271722; }
 .plate img, #sketch { display: block; width: 100%; aspect-ratio: 3/2; object-fit: cover; }
+#cutscene-overlay { position: absolute; inset: 4px; z-index: 1; background: #283b32; }
+#cutscene-overlay img { height: 100%; object-fit: contain; }
+#close-cutscene { position: absolute; top: 8px; right: 8px; min-width: 36px; min-height: 36px;
+  border: 1px solid #fff7e4; border-radius: 50%; background: #203b33; color: #fff7e4; font-size: 22px; }
 figcaption { margin-top: 7px; min-height: 18px; font-size: 12px; color: var(--quiet); }
 #sketch { display: grid; grid-template: repeat(3, 1fr) / repeat(3, minmax(0, 1fr)); place-items: center; background-color: #294339; background-image: linear-gradient(#d7dfbc12 1px, transparent 1px), linear-gradient(90deg, #d7dfbc12 1px, transparent 1px); background-size: 20px 20px; }
 #sketch span { grid-area: 2/2; font: 40px var(--serif); color: #e6c178; }
@@ -66,6 +70,8 @@ h1 { color: var(--pine); font: normal clamp(34px, 4vw, 57px)/1.02 var(--serif); 
 #saved.failed { color: var(--rust); }
 #usage { margin: 3px 0 0; color: var(--quiet); font-size: 12px; font-variant-numeric: tabular-nums; cursor: help; }
 .carried em { color: var(--quiet); font-size: 12px; font-style: normal; }
+.carried-container { flex-basis: 100%; }
+.stored-items { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-left: 16px; }
 .action { border-top: 1px solid var(--line); padding-top: 16px; }
 .byline { font-size: 13px; margin-bottom: 5px; overflow-wrap: anywhere; }
 .byline strong { color: var(--rust); }
@@ -109,10 +115,19 @@ h2 { font: 25px var(--serif); }
 #drawer-body section + section, #drawer-body li + li { border-top: 1px solid var(--line); margin-top: 9px; padding-top: 9px; }
 #drawer-body h3 { font: 600 17px var(--serif); margin-bottom: 7px; }
 #drawer-body ol { list-style: none; margin: 0; padding: 0; }
+#nomination { width: min(720px, calc(100% - 32px)); padding: 20px; color: var(--ink);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 6px; }
+#nomination::backdrop { background: #203b3373; }
+#nomination p { margin-top: 8px; }
+#nomination-preview { max-height: 48vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  padding: 12px; border: 1px solid var(--line); background: #fffcf5; }
+#nomination form { justify-content: flex-end; gap: 8px; flex-wrap: wrap; border: 0; background: transparent; padding: 0; }
+#nomination button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 3px; }
+#download-nomination { background: var(--pine); color: #fffcf5; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 660px) {
   main { padding: 13px 16px 25px; } header { gap: 5px; padding-bottom: 10px; flex-wrap: wrap; }
-  nav { margin-left: -6px; }
+  nav { margin-left: -6px; flex-wrap: wrap; }
   .brand { gap: 7px; } nav button { padding: 6px; font-size: 12px; }
   .spread { grid-template-columns: 1fr; gap: 12px; padding: 14px 0; }
   .plate img, #sketch { aspect-ratio: 2.25/1; }

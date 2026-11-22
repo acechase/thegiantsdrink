@@ -16,6 +16,7 @@ from game_world import world_map
 from playthrough import render
 from room_companion import open_companion
 from saves import SaveError, SaveSlot
+from story_catalog import Catalog, StoryError, bundle_bytes, export_nomination, read_nomination
 
 
 @contextmanager
@@ -42,7 +43,8 @@ def _quiet_typeahead():
         termios.tcsetattr(fd, termios.TCSANOW, previous)
 
 
-def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, export=None, archive=None):
+def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, export=None, archive=None,
+         replay=None, story_catalog=None):
     """Start, resume, list or export games. Playing uses the configured OpenAI credentials."""
     here = Path(__file__).parent
     root = here / "saves"
@@ -60,6 +62,9 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
             print(f"Wrote the playthrough of {slot.ident} to {page}")
             return
 
+        if replay and (resume or load):
+            raise StoryError("Choose a replay edition when starting a new game. A resumed game keeps its edition.")
+        edition, plans = Catalog(story_catalog).route(replay) if replay else ("", ())
         load_dotenv(here / ".env")
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit("Set OPENAI_API_KEY in your environment or in the game's .env file to play.")
@@ -67,8 +72,10 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
             slot = SaveSlot.find(root, load)
             session, journal = slot.load()
         else:
-            slot, session, journal = SaveSlot.new(root), GameSession(world_map), []
-    except SaveError as exc:
+            catalog_path = str(Path(story_catalog).resolve()) if story_catalog else None
+            session = GameSession(world_map, edition=edition, plans=plans, catalog_path=catalog_path)
+            slot, journal = SaveSlot.new(root), []
+    except (SaveError, StoryError) as exc:
         raise SystemExit(str(exc)) from None
 
     if browser:
@@ -105,6 +112,20 @@ def _archive(root, url):
     return slot
 
 
+def _nominate(session, slot):
+    try:
+        bundle = session.story_nomination()
+        print(bundle_bytes(bundle).decode("utf-8"))
+        print("Review the story text above for personal details before sharing it.")
+        if input("Export this storyline for submission? [y/N] ").strip().casefold() in ("y", "yes"):
+            path = export_nomination(bundle, slot.root / "nominations")
+            print(f"Nomination exported to {path}. Send this file to the game maintainer for review.")
+    except StoryError as exc:
+        print(exc)
+    except EOFError:
+        print("Nomination canceled.")
+
+
 def _play(viewer, session, journal, slot):
     # Python's input() uses readline for editing, history and redisplaying queued input.
     if sys.stdin.isatty():
@@ -116,7 +137,10 @@ def _play(viewer, session, journal, slot):
         print(f"Welcome back to The Giant's Drink! Resuming {slot.ident} after turn {len(journal)}.")
     else:
         print("Welcome to The Giant's Drink!")
-    print(f"Autosaving as {slot.ident}. Resume later with --continue or --load {slot.ident}.")
+    if session.saga.edition:
+        print(f"Replaying {session.saga.edition}.")
+    if slot:
+        print(f"Autosaving as {slot.ident}. Resume later with --continue or --load {slot.ident}.")
     print("Type HELP for a list of commands.\n")
     print("[Procedural] Opening room.", flush=True)
     print(session.game.get_current_description(session.rooms, description=session.description))
@@ -129,29 +153,92 @@ def _play(viewer, session, journal, slot):
         except EOFError:
             print("\nThanks for playing The Giant's Drink!")
             return
-        if command:
+        if command.casefold() == "nominate":
+            _nominate(session, slot)
+        elif command:
             place = session.public_state()
             with _quiet_typeahead():
                 events = session.turn(command, lambda event: print(event.text, flush=True))
                 if viewer and not session.ended:
                     session.show(viewer)
-            art = viewer.snapshot() if viewer else {}
             journal.append({
                 "turn": len(journal) + 1, "command": command, "place": place["name"], "chapter": place["chapter"],
                 "events": [{"kind": event.kind, "text": event.text} for event in events if event.kind != "activity"],
-                "art": {"key": art["key"], "kind": art["kind"]} if art.get("key") else None,
+                "art": session.turn_art(viewer) if viewer else None,
             })
-            try:
-                slot.save(session, journal)
-            except Exception as exc:
-                print(f"[Save] Could not save this turn: {exc}", flush=True)
+            if slot:
+                try:
+                    slot.save(session, journal)
+                except Exception as exc:
+                    print(f"[Save] Could not save this turn: {exc}", flush=True)
+
+
+def _stories(argv, queue):
+    parser = argparse.ArgumentParser(prog="main.py stories", description="List, review, and publish replay editions.")
+    parser.add_argument("--catalog", help="Path to a SQLite catalog. Defaults to the one shipped with the game.")
+    actions = parser.add_subparsers(dest="action", required=True)
+    actions.add_parser("list", help="List published editions.")
+    actions.add_parser("queue", help="List imported nominations.")
+    receive = actions.add_parser("import", help="Check a nomination and put it in the local review queue.")
+    receive.add_argument("file", type=Path)
+    for command in ("review", "playtest", "publish"):
+        action = actions.add_parser(command)
+        action.add_argument("id", help="The nomination ID shown on import.")
+        if command == "playtest":
+            action.add_argument("--browser", action="store_true")
+        if command == "publish":
+            action.add_argument("edition", help="A lowercase ID such as lantern-marsh.")
+            action.add_argument("revision", type=int)
+            action.add_argument("--title", required=True)
+    args = parser.parse_args(argv)
+    catalog = Catalog(args.catalog)
+    try:
+        if args.action == "list":
+            editions = catalog.editions() if catalog.path.exists() else []
+            print("\n".join(f"{name}@{revision}  {title}" for name, revision, title in editions)
+                  or "There are no published story editions yet.")
+            return
+        if args.action == "queue":
+            print("\n".join(path.stem for path in sorted(queue.glob("*.json"))) or "The review queue is empty.")
+            return
+        if args.action == "import":
+            bundle = read_nomination(args.file)
+            path = export_nomination(bundle, queue)
+            print(f"Queued {path.stem} for review.")
+        else:
+            if not re.fullmatch(r"[0-9a-f]{64}", args.id):
+                raise StoryError("Use the nomination ID printed at import.")
+            bundle = read_nomination(queue / f"{args.id}.json")
+        if args.action in ("import", "review"):
+            if args.action == "review":
+                print(bundle_bytes(bundle).decode("utf-8"))
+            print("Route " + " → ".join(plan["title"] for plan in bundle["arcs"]))
+            if catalog.path.exists():
+                for edition, exact in catalog.matching_routes(bundle["arcs"]):
+                    print(f"{'Matches' if exact else 'Extends'} {edition}.")
+        elif args.action == "playtest":
+            load_dotenv(Path(__file__).with_name(".env"))
+            session = GameSession.for_story_review(bundle["arcs"])
+            if args.browser:
+                play_in_browser(session)
+            else:
+                _play(None, session, [], None)
+        elif args.action == "publish":
+            edition = catalog.publish(bundle, args.edition, args.revision, args.title)
+            print(f"Published {edition} in {catalog.path}.")
+    except StoryError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["stories"]:
+        _stories(sys.argv[2:], Path(__file__).with_name("saves") / "story-review")
+        raise SystemExit(0)
     cli = argparse.ArgumentParser(description="Play The Giant's Drink.")
-    mode = cli.add_mutually_exclusive_group()
-    mode.add_argument("--browser", action="store_true", help="Play in a local browser with room illustrations.")
-    mode.add_argument("--visuals", action="store_true", help="Open a local browser companion with AI room illustrations.")
+    cli.add_argument("--browser", action="store_true", help="Play in a local browser with illustrations and cutscenes.")
+    cli.add_argument("--visuals", action="store_true", help="Open an illustrated companion for terminal play.")
+    cli.add_argument("--replay", metavar="EDITION", help="Reuse a published story. Use ID@REVISION to pick a revision.")
+    cli.add_argument("--story-catalog", metavar="PATH", help="Use an alternate published SQLite story catalog.")
     saved = cli.add_mutually_exclusive_group()
     saved.add_argument("--continue", dest="resume", action="store_true", help="Resume your most recently played game.")
     saved.add_argument("--load", metavar="NAME", help="Resume a saved game by name.")

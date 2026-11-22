@@ -52,7 +52,7 @@ SIMPLE_COMMANDS = {
 }
 
 
-def _direct_command(command, objects):
+def direct_command(command, objects):
     """Resolve common unambiguous commands immediately."""
     text = " ".join("the" if word == "teh" else word for word in command.casefold().strip(" .!?").split())
     if text in SIMPLE_COMMANDS:
@@ -60,6 +60,27 @@ def _direct_command(command, objects):
     match = re.fullmatch(r"(?:go |move )?(north|south|east|west|up|down)", text)
     if match:
         return "move", match[1]
+    if (re.match(r"(?:can (?:i|we) )?(?:make|craft|fashion|create|sew|fold|knot|tie|turn|use)\b", text)
+            and re.search(r"\btapestr(?:y|ies)\b", text)
+            and re.search(r"\b(?:make|craft|fashion|create|sew|into) (?:a |the )?"
+                          r"(?:(?:makeshift|tapestry) )?(?:bag|sack|pouch)\b",
+                          text)):
+        return "craft_bag", "tapestry"
+    for verb, pattern in (
+        ("pack", r"(?:put|place|pack|store|stow) (.+?) (?:in|into|inside) (.+)"),
+        ("unpack", r"(?:take|remove|retrieve|get) (.+?) (?:out of|from) (.+)"),
+    ):
+        match = re.fullmatch(pattern, text)
+        if match:
+            item, container = match.groups()
+            bag = find_object(container, objects)
+            if (bag and bag.contents is not None) or noun(container) in ("bag", "sack", "tapestry bag", "makeshift bag"):
+                return verb, ToolUse(noun(item), noun(container))
+    match = re.fullmatch(r"(?:look|check) (?:in|inside) (.+)", text)
+    if match:
+        bag = find_object(match[1], objects)
+        if bag and bag.contents is not None:
+            return "examine", bag.name
     match = re.fullmatch(r"(look at|examine|inspect|x|pick up|take|get|drop|search|use) (.+)", text)
     if not match:
         return None
@@ -91,7 +112,7 @@ def parse_command(command, room=None, inventory=(), *, report=None):
         if intent:
             return "trial", intent
 
-    direct = _direct_command(command, objects)
+    direct = direct_command(command, objects)
     if direct:
         return direct
 

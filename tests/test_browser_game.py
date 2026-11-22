@@ -9,7 +9,7 @@ import room_companion
 import saga
 from browser_game import BrowserGame, play_server
 from game_session import GameSession
-from tests.test_game import arc_plan
+from tests.test_game import EXPLORE_ORCHARD, expanded_arc_plan
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ def test_replaying_a_fatal_request_keeps_the_same_life_and_journal_entry(game, m
 
 
 def test_pending_gate_obstacle_and_chapter_survive_browser_turns(game, monkeypatch):
-    plans = iter([None, None, json.dumps(arc_plan()), None])
+    plans = iter([None, None, json.dumps(expanded_arc_plan()), None])
     monkeypatch.setattr(saga, "complete", lambda *args, **kwargs: next(plans))
     monkeypatch.setattr(game.session.content, "generate_description", lambda *a, **kw: kw["description"])
     for command in ("take sword", "go north", "go north", "follow the banister", "go north", "upend the tray"):
@@ -109,7 +109,7 @@ def test_pending_gate_obstacle_and_chapter_survive_browser_turns(game, monkeypat
     assert "silver bell" not in json.dumps(state) and "planned_solutions" not in json.dumps(state)
     submit(game, "go south")
     assert all(e["kind"] != "chapter" for e in submit(game, "go north")["latest"]["events"])
-    for command in ("go north", "take silver bell", "go east"):
+    for command in EXPLORE_ORCHARD[1:]:
         state = submit(game, command)
     assert "north" in state["room"]["exits"]
     warning = submit(game, "go north")
@@ -117,20 +117,21 @@ def test_pending_gate_obstacle_and_chapter_survive_browser_turns(game, monkeypat
     assert "will cost you this life" in warning["room"]["description"]
     state = submit(game, "go north")
     assert state["room"]["life"] == 2 and state["room"]["name"] == "Orchard Gate"
-    assert state["room"]["inventory"] == ["rusty sword", "silver bell"] and state["room"]["lessons"]
-    for command in ("go north", "go east"):
+    assert state["room"]["inventory"] == ["rusty sword", "reed wedge", "brass spindle", "silver bell"]
+    assert state["room"]["lessons"]
+    for command in ("go west", "go north", "go east"):
         state = submit(game, command)
     assert "will cost you this life" in state["room"]["description"]
     assert "What will you use it on?" in str(submit(game, "use silver bell")["latest"]["events"])
     state = submit(game, "use silver bell on glass heron")
     assert "stair of cloud" in str(state["latest"]["events"]) and "will cost you this life" not in state["room"]["description"]
-    assert submit(game, "go west")["room"]["name"] == "Chiming Grove"
+    assert submit(game, "go west")["room"]["name"] == "Echo Vault"
 
 
 @contextmanager
-def running_server(tmp_path, monkeypatch):
+def running_server(tmp_path, monkeypatch, session=None):
     monkeypatch.setattr(room_companion, "generate_image", lambda payload: b"art")
-    with play_server(GameSession(), tmp_path, "test-model") as server:
+    with play_server(session or GameSession(), tmp_path, "test-model") as server:
         worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         worker.start()
         try:
@@ -138,6 +139,54 @@ def running_server(tmp_path, monkeypatch):
         finally:
             server.shutdown()
             worker.join(timeout=2)
+
+
+def test_discovery_paintings_queue_without_blocking_turns_or_losing_earlier_scenes(tmp_path, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    requests = []
+
+    def illustrate(payload):
+        prompt = payload["prompt"]
+        if "Landscape story illustration" in prompt:
+            requests.append(prompt)
+            if len(requests) == 1:
+                entered.set()
+                assert release.wait(timeout=3)
+        return b"art"
+
+    monkeypatch.setattr("content_generator.ContentGenerator.generate_description", lambda self, *a, **kw: kw["description"])
+    with running_server(tmp_path, monkeypatch) as server:
+        monkeypatch.setattr(room_companion, "generate_image", illustrate)
+        game = server.game
+        try:
+            assert not submit(game, "take sword")["cutscene"].get("key")
+            state = submit(game, "use sword on wall")
+            first = state["cutscene"]["key"]
+            assert state["art"]["kind"] == "room" and state["latest"]["art"]["kind"] == "cutscene"
+            assert entered.wait(timeout=3)
+            for command in ("north", "north", "follow the banister", "north", "upend the tray"):
+                state = submit(game, command)
+            last = state["cutscene"]["key"]
+            assert last != first and state["cutscene"]["status"] == "queued"
+            assert len(requests) == 1
+        finally:
+            release.set()
+        painter = server.viewer.cutscenes
+        with painter._condition:
+            assert painter._condition.wait_for(lambda: painter.snapshot()["status"] == "ready", timeout=3)
+        assert len(requests) == 3 and "rusty sword" in requests[0]
+        assert (tmp_path / f"{first}.jpg").is_file()
+        assert "The player in action" in game.playthrough()
+        client = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            client.request("GET", f"/art/{last}.jpg")
+            response = client.getresponse()
+            assert response.status == 200 and response.read() == b"art"
+            client.request("GET", "/cutscene.js")
+            response = client.getresponse()
+            assert response.status == 200 and b"createCutscenePlayer" in response.read()
+        finally:
+            client.close()
 
 
 def test_http_game_refresh_quit_and_validation(tmp_path, monkeypatch):

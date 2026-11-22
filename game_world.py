@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 from trials import FallingStairs, GiantTable
 
+DIRECTIONS = ("north", "south", "east", "west", "up", "down")
+OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east", "up": "down", "down": "up"}
+
 
 def noun(text):
     """Normalize an object reference while retaining meaningful modifiers."""
@@ -211,6 +214,15 @@ class Item:
         description: Text description of the item's appearance or purpose.
         usable: Whether the item can be activated with the 'use' command.
     """
+
+    puzzle_arc = 0  # Older items have no generated puzzle role.
+    contents = None  # A list on containers, including empty ones.
+
+    def make_tapestry_bag(self):
+        """Keep the same object while turning a tapestry into a usable container."""
+        self.aliases = tuple(dict.fromkeys((*self.aliases, self.name, "tapestry", "bag", "makeshift bag", "sack")))
+        self.name = "tapestry bag"
+        self.contents = []
 
     def __init__(self, name, description, usable=False, *, aliases=(), room_text="", discovery=None):
         """Initialize an Item with a name, description, and usability flag.

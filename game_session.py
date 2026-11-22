@@ -8,9 +8,10 @@ from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
 from content_generator import ContentGenerator
 from game_world import find_among, noun, world_map
-from room_companion import Portrait, Scene
+from room_companion import Avatar, Cutscene, Portrait, Scene
 from saga import CASTLE_HORIZON, Saga
 from simulation_engine import GameState
+from story_catalog import StoryError, nomination
 from trials import GiantTable
 from usage import Meter, metering
 
@@ -20,11 +21,14 @@ HELP_TEXT = """Available commands:
   GO <direction> - Move through a listed exit
   TAKE <item>   - Pick up an item
   DROP <item>   - Set something down here
+  MAKE A BAG FROM THE TAPESTRY - Turn a carried tapestry into a bag
+  PUT <item> IN <bag> / TAKE <item> FROM <bag> - Store or retrieve a carried item
   SEARCH <object> - Investigate a detail, or describe your own experiment
   USE <item>    - Use an item from your inventory
   USE <item> ON <object> - Try a tool on something nearby
   ATTACK <target> - Attack something
   REMEMBER      - Recall lessons from earlier lives
+  NOMINATE      - Preview an export of the post-Cup storyline you have reached
   LOOK AT YOURSELF - See what you have on and carry (paints a portrait in the browser)
   INVENTORY     - Check your inventory
   HELP          - Show this help message
@@ -36,6 +40,8 @@ def _extend(saga, rooms, game_state, profile_summary, report):
     _, direction = saga.gate
     if saga.plan_next(rooms, game_state, profile_summary=profile_summary, report=report):
         return f"A way {direction} has opened."
+    if saga.review_complete:
+        return "You have reached the end of the nominated route."
     return f"To the {direction} there is only grey mist so far. Go {direction} when you want to look again."
 
 
@@ -50,19 +56,43 @@ class TurnEvent:
 class GameSession:
     """Own one player's world and run its commands in order."""
 
-    def __init__(self, initial_world=None):
+    def __init__(self, initial_world=None, *, edition="", plans=(), catalog_path=None):
         """Start at the castle entrance with a private copy of the world."""
         self.rooms = deepcopy(world_map if initial_world is None else initial_world)
         self.game = GameState()
         self.behavior = BehaviorAnalyzer()
         self.adaptation = AdaptationAI()
         self.content = ContentGenerator()
-        self.saga = Saga()
+        self.saga = Saga(edition=edition, preferred_plans=plans, catalog_path=catalog_path)
         self.ended = False
         self.portrait = None  # Shown in place of the room illustration until the next turn.
+        self.cutscene = None  # The latest discovery stays visible as the player continues.
+        self.cutscene_turn = 0
+        self.discovered_actions = set()
         self.meter = Meter()  # AI tokens this game has spent, kept with its saves.
         self.scene = Scene.from_room(self.room)
         self.description = self.scene.description
+
+    @classmethod
+    def for_story_review(cls, plans):
+        """Start an isolated playtest at the crossing after the Giant's Cup."""
+        session = cls(plans=tuple(plans))
+        session.saga.reviewing = True
+        session.game.current_room = "Giant's Hall"
+        session.game.giant_defeated = True
+        session.saga.begin(session.rooms, "The giant’s bargain is broken.")
+        session.saga.plan_next(session.rooms, session.game)
+        if not session.saga.arcs:
+            raise StoryError("The nominated storyline could not be opened for playtesting.")
+        session.scene = Scene.from_room(session.room)
+        session.description = session.scene.description
+        return session
+
+    def story_nomination(self):
+        """Return only the playable plans for the story this player has reached."""
+        if self.saga.reviewing:
+            raise StoryError("This game is a nomination playtest.")
+        return nomination([arc.plan for arc in self.saga.reached_arcs])
 
     @property
     def room(self):
@@ -74,25 +104,36 @@ class GameSession:
         room = self.room
         exits = list(self.scene.exits)
         gate = self.saga.gate
-        if gate and gate[0] == room.name and gate[1] not in exits:
+        if gate and not self.saga.review_complete and gate[0] == room.name and gate[1] not in exits:
             exits.append(gate[1])
         return {
             "name": room.name, "description": self.description,
             "chapter": self.saga.arcs[room.arc - 1].title if room.arc else "The Castle",
             "items": self.scene.items, "scenery": self.scene.scenery, "exits": exits,
             "inventory": [item.name for item in self.game.inventory], "worn": list(self.game.worn),
+            "containers": {item.name: [stored.name for stored in item.contents]
+                           for item in self.game.inventory if item.contents is not None},
             "trail": [{"way": way, "room": name} for way, name in self.game.trail[-4:]], "ended": self.ended,
             "life": self.game.deaths + 1, "lessons": list(self.game.lessons),
+            "story_edition": self.saga.edition,
+            "can_nominate": (not self.saga.reviewing and bool(self.saga.reached_arcs)
+                             and all(arc.plan for arc in self.saga.reached_arcs)),
             "offers": [f"Drink from the {side} cup" for side in ("left", "right") if side not in room.trial.spilled]
             if isinstance(room.trial, GiantTable) else [],
         }
 
     def show(self, viewer):
-        """Illustrate the player's portrait if they just looked themselves over, otherwise their room."""
+        """Present the current room or portrait and the latest discovery independently."""
         if self.portrait:
             viewer.show_portrait(self.portrait)
         else:
             viewer.show(self.room, description=self.description)
+        if self.cutscene and getattr(viewer, "cutscenes", None):
+            viewer.cutscenes.present(self.cutscene)
+
+    def turn_art(self, viewer):
+        """Use a discovery painting for its turn in the journal."""
+        return viewer.journal_art(cutscene=self.cutscene_turn == len(self.game.history))
 
     def turn(self, command, on_event=None):
         """Resolve one command, delivering each event live and returning the ordered transcript."""
@@ -115,6 +156,7 @@ class GameSession:
             emit("activity", text)
 
         self.portrait = None
+        self.game.discovery = None
         self.game.history.append(command)
         previous = self.room
         action, target = parse_command(command, previous, self.game.inventory, report=report)
@@ -128,7 +170,9 @@ class GameSession:
             return events
 
         previous_deaths = self.game.deaths
+        before, outfit = Scene.from_room(previous), Avatar.of(self.game)
         result = self._resolve(command, action, target, report)
+        discovery, self.game.discovery = self.game.discovery, None
         self.game.prune_worn()
         profile = self.behavior.get_profile()
         summary = self.behavior.get_profile_summary()
@@ -143,6 +187,13 @@ class GameSession:
             emit("arrival", self.game.get_current_description(self.rooms))
             return events
         emit("outcome", result)
+        if discovery:
+            kind, subject, tool, motion = discovery
+            identity = (before.name, kind, subject, tool)
+            if identity not in self.discovered_actions:
+                self.discovered_actions.add(identity)
+                self.cutscene = Cutscene(before, outfit, motion, result)
+                self.cutscene_turn = len(self.game.history)
         if action == "self":
             self.portrait = Portrait.of(self.game, self.room, result)
         if self.game.giant_defeated and not self.saga.started:
@@ -197,6 +248,8 @@ class GameSession:
             return result
         if action == "move" and target:
             waiting = self.saga.gate == (room.name, target)
+            if waiting and self.saga.review_complete:
+                return "You have reached the end of the nominated route."
             if waiting:
                 waiting = not self.saga.plan_next(
                     rooms, game, profile_summary=self.behavior.get_profile_summary(), report=report
@@ -208,6 +261,10 @@ class GameSession:
                 result = game.move(target, rooms)
                 if game.current_room != room.name and game.deaths == lives_lost:
                     self.behavior.update_profile("move")
+        elif action == "craft_bag":
+            result = game.make_tapestry_bag()
+        elif action in ("pack", "unpack"):
+            result = game.transfer_bag_item(target.tool, target.subject, unpack=action == "unpack")
         elif action == "take" and target:
             held = len(game.inventory)
             result = game.take_item(target, rooms, command=command, report=report)
@@ -238,7 +295,12 @@ class GameSession:
             self.behavior.update_profile("attack")
         elif action == "check" and target == "inventory":
             result = (
-                "Inventory: " + ", ".join(item.name + (" (worn)" if item.name in game.worn else "") for item in game.inventory)
+                "Inventory: " + ", ".join(
+                    item.name + (" (worn)" if item.name in game.worn else "")
+                    + (f" [{', '.join(stored.name for stored in item.contents) or 'empty'}]"
+                       if item.contents is not None else "")
+                    for item in game.inventory
+                )
                 if game.inventory
                 else "Your inventory is empty."
             )

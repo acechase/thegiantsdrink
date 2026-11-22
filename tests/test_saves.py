@@ -107,6 +107,44 @@ def test_playthrough_page_is_escaped_and_embeds_each_picture_once(tmp_path):
     assert 'class="bad' not in page and '<p class="death">You die.</p>' in page
 
 
+def test_saved_cutscene_survives_later_turns_and_does_not_repeat(tmp_path):
+    session = GameSession()
+    for command in ("take sword", "use sword on wall", "north"):
+        session.turn(command)
+    slot = SaveSlot.new(tmp_path)
+    slot.save(session, [])
+    restored, _ = slot.load()
+    assert restored.cutscene == session.cutscene
+    assert restored.discovered_actions == session.discovered_actions
+    restored.turn("south")
+    restored.turn("use sword on wall")
+    assert restored.cutscene_turn == 2 and restored.cutscene == session.cutscene
+
+
+def test_legacy_tapestry_bag_recovers_storage_and_keeps_it_on_resume(tmp_path):
+    from game_world import Item
+
+    session = GameSession()
+    tapestry = Item("tapestries", "The tapestries are knotted into a large fabric bag.", aliases=("tapestry",))
+    salt = Item("salt", "A pinch of salt.")
+    session.game.inventory.extend([tapestry, salt])
+    session.game.worn["tapestries"] = "The bag hangs from your shoulders."
+    slot = SaveSlot.new(tmp_path)
+    slot.save(session, [])
+    restored, _ = slot.load()
+    assert restored.public_state()["worn"] == ["tapestry bag"]
+    assert restored.public_state()["containers"] == {"tapestry bag": []}
+    restored.turn("place the salt into the makeshift bag")
+    assert restored.public_state()["inventory"] == ["tapestry bag"]
+    assert restored.public_state()["containers"] == {"tapestry bag": ["salt"]}
+    assert "Inside: salt." in restored.turn("look in bag")[-1].text
+    slot.save(restored, [])
+    restored, _ = slot.load()
+    restored.turn("take the salt from the bag")
+    assert restored.public_state()["inventory"] == ["tapestry bag", "salt"]
+    assert restored.public_state()["containers"] == {"tapestry bag": []}
+
+
 def test_terminal_games_autosave_resume_list_and_export(openai_api, tmp_path):  # noqa: F811
     import main
 

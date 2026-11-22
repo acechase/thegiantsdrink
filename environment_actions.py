@@ -98,6 +98,11 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
     grounded = _ground(anchor, objects) or room.landmark(anchor)
     if grounded and room.trial and grounded.name in room.trial.fixtures and effect != "observe":
         return grounded.description
+    if grounded and effect != "observe":
+        if room.generated and room.passage and grounded in room.scenery and grounded.name == room.passage.landmark:
+            return room.passage.visible if room.passage_open else grounded.description
+        if grounded.puzzle_arc and effect in ("alter", "detach", "remove"):
+            return grounded.description
     if obstacle is not None and grounded is obstacle and effect in ("overcome", "take", "remove"):
         # The obstacle can be outwitted with any carried tool, but never carried off or erased.
         base = _field(data, "room_after")
@@ -105,7 +110,8 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
             return fallback
         if report:
             report("[Procedural] Clearing the way onward.")
-        return game.overcome(room, reply, room_after=base, obstacle_description=_field(data, "description"))
+        return game.overcome(room, reply, room_after=base, obstacle_description=_field(data, "description"),
+                             tool=tool.name if tool else "", action=command[:320])
     if effect == "overcome":
         return fallback  # Only the obstacle itself can be overcome.
     if grounded is None or (subject in objects and grounded is not subject):
@@ -114,6 +120,8 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
     if effect == "observe":
         room.remember(reply)
         return reply
+    if effect == "remove" and subject.contents:
+        return f"Empty the {subject.name} before getting rid of it."
 
     base, description = _field(data, "room_after"), _field(data, "description")
     if not base or (effect in ("alter", "take", "detach") and not description):
@@ -127,6 +135,7 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
     if effect == "take" and subject in game.inventory:
         return f"You're already carrying the {subject.name}."
 
+    prior = (room.fixed_text(), subject.description, game.worn.get(subject.name))
     # Everything required for this change is present. Only the engine moves objects between containers.
     if subject not in objects:
         subject.aliases = tuple({noun(reference), noun(anchor)} - {subject.name})
@@ -157,6 +166,8 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
         elif item in game.inventory:
             game.worn[item.name] = worn
     room.rewrite(base)
+    if effect != "alter" or prior != (room.fixed_text(), subject.description, game.worn.get(subject.name)):
+        game.discover(effect, subject.name, command[:320], tool=tool.name if tool else "")
     if report:
         report("[Procedural] Updating the room and inventory.")
     return reply

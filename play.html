@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>The Giant’s Drink</title>
   <link rel="stylesheet" href="/play.css">
+  <script defer src="/cutscene.js"></script>
   <script defer src="/play.js"></script>
 </head>
 <body>
@@ -15,6 +16,7 @@
       <button id="bag" aria-controls="drawer" aria-expanded="false">Inventory <span id="count"></span></button>
       <button id="history" aria-controls="drawer" aria-expanded="false">Journal</button>
       <a id="playthrough" href="/playthrough" target="_blank" rel="noopener">Playthrough</a>
+      <button id="nominate" type="button" hidden>Nominate storyline</button>
     </nav>
   </header>
   <aside id="drawer" hidden aria-labelledby="drawer-title">
@@ -23,9 +25,21 @@
     <div id="drawer-body"></div>
     <button id="older" hidden>Earlier turns</button>
   </aside>
+  <dialog id="nomination" aria-labelledby="nomination-title">
+    <h2 id="nomination-title">Nominate storyline</h2>
+    <p>Review the story text for personal details. Download the file to send to the game maintainer.</p>
+    <pre id="nomination-preview" tabindex="0" aria-label="Story text and puzzle details"></pre>
+    <form method="dialog">
+      <button autofocus>Cancel</button>
+      <button id="download-nomination" type="button">Download nomination</button>
+    </form>
+  </dialog>
   <section class="spread" aria-labelledby="name">
     <figure>
-      <div class="plate"><div id="sketch" aria-label="Room exits"><span aria-hidden="true">✧</span></div></div>
+      <div class="plate">
+        <div id="sketch" aria-label="Room exits"><span aria-hidden="true">✧</span></div>
+        <div id="cutscene-overlay" hidden><button id="close-cutscene" type="button" aria-label="Close cutscene">×</button></div>
+      </div>
       <figcaption><span id="art-status" role="status">Connecting…</span> <button id="retry" hidden>Retry illustration</button></figcaption>
     </figure>
     <article>

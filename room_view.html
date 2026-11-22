@@ -3,6 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>The Giant’s Drink · Room companion</title>
+<script defer src="/cutscene.js"></script>
 <style>
   :root { color-scheme: light; --paper: #f4f0e5; --ink: #252b27; --line: #c9c6b7; --brass: #806240; }
   * { box-sizing: border-box; }
@@ -20,6 +21,9 @@
   .plate { padding: 6px; border: 1px solid #b5af9e; background: #e5e0d2; }
   #stage { aspect-ratio: 3/2; position: relative; overflow: hidden; background: radial-gradient(ellipse at 46% 55%, #373d38, #1b2323); }
   #stage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #cutscene-overlay { position: absolute; inset: 0; z-index: 1; background: #1b2323; }
+  #close-cutscene { position: absolute; top: 8px; right: 8px; min-width: 36px; min-height: 36px; margin: 0;
+    padding: 0; border: 1px solid #fff7e4; border-radius: 50%; background: #203b33; color: #fff7e4; font-size: 22px; }
   #waiting { position: absolute; inset: 0; display: grid; place-items: center; color: #e3ddca; font: italic 20px Georgia, serif; }
   [hidden] { display: none !important; }
   figcaption { margin-top: 12px; color: #575b50; letter-spacing: .035em; font-weight: 400; }
@@ -34,7 +38,9 @@
 <div class="page">
   <header><span class="title">The Giant’s Drink</span><span class="label">Room companion</span></header>
   <main>
-    <figure><div class="plate"><div id="stage"><span id="waiting">Waiting for the game…</span></div></div>
+    <figure><div class="plate"><div id="stage"><span id="waiting">Waiting for the game…</span>
+      <div id="cutscene-overlay" hidden><button id="close-cutscene" type="button" aria-label="Close cutscene">×</button></div>
+    </div></div>
       <figcaption id="status" role="status">Connecting to the game…</figcaption>
       <button id="retry" hidden>Retry illustration</button>
     </figure>
@@ -45,23 +51,27 @@
 </div>
 <script>
   const element = id => document.getElementById(id);
-  let currentKey, imageURL, previous;
+  let currentKey, imageURL, previous, cutscenes;
   function render(scene) {
     if (!scene.key) return;
-    currentKey = scene.key;
+    const cutscene = cutscenes?.current;
+    const retryArt = cutscene?.status === "error" ? cutscene : scene;
+    currentKey = retryArt.key;
     element("name").textContent = scene.name;
     element("description").textContent = scene.description;
     element("items").textContent = scene.items.join(" · ") || "No loose items";
     element("exits").textContent = scene.exits.join(" · ") || "None visible";
     const messages = {queued: "Illustration queued", generating: "AI illustrating · " + scene.model,
       cached: "Cached AI illustration · " + scene.model, ready: "AI illustration · " + scene.model, error: scene.error};
-    element("status").textContent = messages[scene.status];
-    element("retry").hidden = scene.status !== "error";
+    const paintingCutscene = ["queued", "generating"].includes(cutscene?.status);
+    element("status").textContent = paintingCutscene ? "Painting discovery…" : retryArt.error || messages[scene.status];
+    element("retry").hidden = retryArt.status !== "error";
+    element("retry").textContent = retryArt.kind === "cutscene" ? "Retry cutscene" : "Retry illustration";
     const waiting = element("waiting");
     waiting.textContent = scene.status === "error" ? "Illustration unavailable" : "Illustrating the room…";
     if (imageURL === scene.image) return;
     imageURL = scene.image;
-    element("stage").querySelector("img")?.remove();
+    element("stage").querySelector(":scope > img")?.remove();
     waiting.hidden = false;
     if (!imageURL) return;
     const img = new Image();
@@ -84,7 +94,13 @@
       const response = await fetch("/state", {cache: "no-store"});
       if (!response.ok) throw Error();
       const state = await response.text();
-      if (state !== previous) { previous = state; render(JSON.parse(state)); }
+      const scene = JSON.parse(state);
+      cutscenes ??= window.createCutscenePlayer?.();
+      cutscenes?.update(scene.cutscene, scene.key);
+      if (state !== previous) {
+        previous = state;
+        render(scene);
+      }
     } catch {
       previous = undefined;
       element("status").textContent = "Game disconnected";

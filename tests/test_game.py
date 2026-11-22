@@ -490,13 +490,57 @@ def arc_plan(prefix="", horizon="Beyond the pool, a stair of cloud climbs toward
     }
 
 
+def expanded_arc_plan(prefix="", **kwargs):
+    plan = arc_plan(prefix, **kwargs)
+    hub, grove, pool = plan["rooms"]
+    bell = grove["items"].pop()
+    hub["exits"].update(east=prefix + "Reed Bank", west=prefix + "Weather Porch")
+    grove["exits"].clear()
+    grove["description"] = "A glass shutter catches the sound from the trees."
+    grove["scenery"].append({"name": "glass shutter", "description": "A shallow wedge-shaped notch interrupts the frame."})
+    plan["rooms"].extend([
+        {"name": prefix + "Reed Bank", "description": "Reeds tap a thin rhythm along the bank.",
+         "exits": {"north": prefix + "Map Room"},
+         "items": [{"name": prefix + "reed wedge", "description": "A wedge rubbed smooth by a glass frame."}]},
+        {"name": prefix + "Weather Porch", "description": "A weather dial trembles in an open stone arch.",
+         "exits": {}, "scenery": [{"name": "weather dial", "description": "The spindle is missing from its empty hub."}]},
+        {"name": prefix + "Map Room", "description": "A map shows the orchard as a collection of musical instruments.",
+         "exits": {}, "scenery": [{"name": "map", "description": "The instruments face opposite sides of the orchard."}]},
+        {"name": prefix + "Bell Foundry", "description": "A bench stands where metal once ran molten.",
+         "exits": {}, "scenery": [{"name": "bench", "description": "Old circular tools have left marks on the wood."}],
+         "items": [{"name": prefix + "brass spindle", "description": "A brass shaft etched with the points of a compass."}]},
+        {"name": prefix + "Echo Vault", "description": "The air rings with the echo of a single note.",
+         "exits": {"east": pool["name"]}, "items": [bell]},
+    ])
+    for room in plan["rooms"]:
+        room.setdefault("items", [])
+        room.setdefault("scenery", [])
+    plan["passages"] = [
+        {"room": grove["name"], "landmark": "glass shutter", "tool": prefix + "reed wedge", "direction": "east",
+         "destination": prefix + "Bell Foundry", "reveal": "The shutter slides aside.",
+         "visible": "An open shutter leads east."},
+        {"room": prefix + "Weather Porch", "landmark": "weather dial", "tool": prefix + "brass spindle",
+         "direction": "north", "destination": prefix + "Echo Vault", "reveal": "The dial swings back into the arch.",
+         "visible": "The arch opens north."},
+    ]
+    return plan
+
+
+# From the Giant's Hall through the linked mechanisms and up to the final obstacle.
+EXPLORE_ORCHARD = (
+    "go north", "go east", "take reed wedge", "go west", "go north",
+    "use reed wedge on glass shutter", "go east", "take brass spindle", "go west", "go south", "go west",
+    "use brass spindle on weather dial", "go north", "take silver bell", "go east",
+)
+
+
 def _run_game(openai_api, inputs, commands, plans=()):
     """Run the game loop with scripted OpenAI replies at the HTTP boundary."""
     import main
     import saga
 
     replies = dict(zip(inputs, commands))
-    plans = list(plans) or [arc_plan()]
+    plans = list(plans) or [expanded_arc_plan()]
 
     def respond(request):
         payload = json.loads(request.body)
@@ -952,10 +996,9 @@ def _arc_world():
 
 class TestArcs:
     def test_play_continues_through_planned_arcs(self, openai_api):
-        inputs = [*TO_THE_GIANT, "go north", "go north", "take silver bell", "go east", "go north",
-                  "use silver bell on glass heron", "go north", "go south"]
+        inputs = [*TO_THE_GIANT, *EXPLORE_ORCHARD, "go north", "use silver bell on glass heron", "go north", "go south"]
         replies = [None] * len(inputs)
-        plans = [arc_plan(), arc_plan("Second ", horizon="Further still, a lighthouse shines darkness.")]
+        plans = [expanded_arc_plan(), expanded_arc_plan("Second ", horizon="Further still, a lighthouse shines darkness.")]
         output = _run_game(openai_api, inputs, replies, plans)
         assert "The giant’s bargain is broken." in output
         assert "A way north has opened." in output
@@ -977,12 +1020,15 @@ class TestArcs:
 
     def test_plan_builds_a_connected_arc_behind_the_gate(self, openai_api):
         rooms, game, saga = _arc_world()
-        openai_api.post(OPENAI_URL, json=completion(json.dumps(arc_plan())))
+        openai_api.post(OPENAI_URL, json=completion(json.dumps(expanded_arc_plan())))
         arc = saga.plan_next(rooms, game)
         assert arc.start == "Orchard Gate" and saga.gate is None
         assert rooms["Giant's Hall"].exits["north"] == "Orchard Gate"
-        assert rooms["Orchard Gate"].exits == {"north": "Chiming Grove", "south": "Giant's Hall"}
-        assert rooms["Still Pool"].exits == {"west": "Chiming Grove"}
+        assert rooms["Orchard Gate"].exits == {
+            "north": "Chiming Grove", "east": "Reed Bank", "west": "Weather Porch", "south": "Giant's Hall"
+        }
+        assert rooms["Still Pool"].exits == {"west": "Echo Vault"}
+        assert rooms["Chiming Grove"].exits == {"south": "Orchard Gate"}
         assert "dust" in rooms["Giant's Hall"].prose() and "sits upon it" not in rooms["Giant's Hall"].prose()
         request = json.loads(json.loads(openai_api.calls[0].request.body)["messages"][1]["content"])
         assert request["reserved_start_exit"] == "south" and "Giant's Hall" in request["existing_room_names"]
@@ -1010,12 +1056,54 @@ class TestArcs:
 
     def test_rejected_plan_is_retried_with_the_reason(self, openai_api):
         rooms, game, saga = _arc_world()
-        broken = arc_plan()
+        broken = expanded_arc_plan()
         broken["challenge"]["obstacle"] = "glass swan"
         openai_api.post(OPENAI_URL, json=completion(json.dumps(broken)))
-        openai_api.post(OPENAI_URL, json=completion(json.dumps(arc_plan())))
+        openai_api.post(OPENAI_URL, json=completion(json.dumps(expanded_arc_plan())))
         assert saga.plan_next(rooms, game).title == "The Glass Orchard"
         assert "was rejected: challenge.obstacle" in json.loads(openai_api.calls[1].request.body)["messages"][1]["content"]
+
+    def test_new_generation_retries_a_short_legacy_plan(self, openai_api):
+        rooms, game, saga = _arc_world()
+        openai_api.post(OPENAI_URL, json=completion(json.dumps(arc_plan())))
+        openai_api.post(OPENAI_URL, json=completion(json.dumps(expanded_arc_plan())))
+        arc = saga.plan_next(rooms, game)
+        assert len(arc.rooms) == 8
+        assert "8 to 12 rooms" in json.loads(openai_api.calls[1].request.body)["messages"][1]["content"]
+
+    @pytest.mark.parametrize(
+        ("change", "reason"),
+        [
+            (lambda p: p["rooms"][0]["exits"].update(up="Echo Vault"), "must open new rooms"),
+            (lambda p: p["rooms"][4]["exits"].update(north="Echo Vault"), "both ends"),
+            (lambda p: p["rooms"][5]["items"].append(p["rooms"][6]["items"][0]), "not unique"),
+            (lambda p: p["rooms"][5]["items"].append(p["rooms"][6]["items"].pop()), "tool from the previous stage"),
+            (lambda p: p["challenge"]["solutions"][0].update(tool="reed wedge"), "beyond the second passage"),
+        ],
+    )
+    def test_expanded_plan_rejects_shortcuts_and_conflicting_exits(self, change, reason):
+        from saga import PlanError, build_arc
+
+        plan = expanded_arc_plan()
+        change(plan)
+        with pytest.raises(PlanError, match=reason):
+            build_arc(json.dumps(plan), number=1, reserved="south", world=world_map, require_passages=True)
+
+    def test_fabricated_tool_and_improvisation_cannot_bypass_the_first_passage(self, openai_api):
+        from game_world import Item
+        from saga import build_arc
+
+        _, rooms = build_arc(json.dumps(expanded_arc_plan()), number=1, reserved="south", world=world_map)
+        game = GameState()
+        game.current_room = "Chiming Grove"
+        game.inventory.append(Item("reed wedge", "A crude imitation."))
+        game.use_on("reed wedge", "glass shutter", rooms)
+        openai_api.post(OPENAI_URL, json=adjudication(effect="remove", anchor="glass shutter",
+                                                      reply="You tear off the shutter.", room_after="The shutter is gone."))
+        game.investigate("glass shutter", rooms, "tear off the glass shutter")
+        assert rooms["Chiming Grove"].exits == {"south": "Orchard Gate"}
+        assert rooms["Chiming Grove"].scenery[0].name == "glass shutter"
+        assert "west" not in rooms["Bell Foundry"].exits
 
     def test_unavailable_planner_leaves_mist_until_the_player_tries_again(self, openai_api):
         inputs = [*TO_THE_GIANT, "go north", "go north"]
@@ -1027,7 +1115,7 @@ class TestArcs:
                 attempts.append(1)
                 if len(attempts) <= 2:
                     return 503, {}, "{}"
-                return 200, {}, json.dumps(completion(json.dumps(arc_plan())))
+                return 200, {}, json.dumps(completion(json.dumps(expanded_arc_plan())))
             if "response_format" in payload:
                 return 200, {}, json.dumps(completion(json.dumps({"action": "attack", "target": "giant"})))
             return 200, {}, json.dumps(completion("You stand in a room."))
@@ -1049,7 +1137,7 @@ class TestArcs:
 
     def test_unplanned_but_clever_solution_can_overcome_the_obstacle(self, openai_api):
         rooms, game, saga = _arc_world()
-        openai_api.post(OPENAI_URL, json=completion(json.dumps(arc_plan())))
+        openai_api.post(OPENAI_URL, json=completion(json.dumps(expanded_arc_plan())))
         saga.plan_next(rooms, game)
         game.current_room = "Still Pool"
         pool = rooms["Still Pool"]
@@ -1067,7 +1155,7 @@ class TestArcs:
 
     def test_obstacle_cannot_be_carried_off_or_overcome_through_something_else(self, openai_api):
         rooms, game, saga = _arc_world()
-        openai_api.post(OPENAI_URL, json=completion(json.dumps(arc_plan())))
+        openai_api.post(OPENAI_URL, json=completion(json.dumps(expanded_arc_plan())))
         saga.plan_next(rooms, game)
         game.current_room = "Still Pool"
         openai_api.post(OPENAI_URL, json=adjudication(effect="overcome", anchor="pool", reply="You swim past.",

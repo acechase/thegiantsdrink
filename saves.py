@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import pickle
+import re
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -25,7 +26,7 @@ class SaveError(Exception):
     """A save that cannot be resumed, with a player-readable reason."""
 
 
-def _write(path, data):
+def write_atomic(path, data):
     """Replace a file atomically so a crash never leaves half a save."""
     with NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
         tmp.write(data)
@@ -73,6 +74,16 @@ def _upgrade(session):
         _fill_missing(getattr(session, part), fresh)
     for room in session.rooms.values():
         _fill_missing(room, Room(room.name, ""))
+    # Older adjudication could describe a completed bag while leaving the object as a tapestry.
+    for items in (session.game.inventory, *(room.items for room in session.rooms.values())):
+        for item in items:
+            if (item.name in ("tapestry", "tapestries") and item.contents is None
+                    and re.search(
+                        r"\b(?:(?:into|forms?|forming|becomes?)\b[^.!?]{0,70}\b(?:bag|sack|pouch)"
+                        r"|(?:bag|sack|pouch) (?:made|fashioned|stitched|knotted) from (?:the |a )?tapestr(?:y|ies))\b",
+                        item.description, re.IGNORECASE
+                    )):
+                session.game.convert_tapestry(item)
 
 
 class SaveSlot:
@@ -125,7 +136,7 @@ class SaveSlot:
         self.path.mkdir(parents=True, exist_ok=True)
         snapshot = pickle.dumps({"format": FORMAT, "session": session, "journal": journal},
                                 protocol=pickle.HIGHEST_PROTOCOL)
-        _write(self.path / "state.bin", _sign(_key(self.root, create=True), snapshot) + snapshot)
+        write_atomic(self.path / "state.bin", _sign(_key(self.root, create=True), snapshot) + snapshot)
         self.write_record(session.public_state(), journal, tokens=session.meter.snapshot())
 
     def write_record(self, room, journal, *, tokens=None):
@@ -138,7 +149,7 @@ class SaveSlot:
             "lessons": room["lessons"], "wearing": room.get("worn", []), "tokens": tokens, "journal": journal,
         }
         self.path.mkdir(parents=True, exist_ok=True)
-        _write(self.path / "game.json", json.dumps(record, ensure_ascii=False, indent=1).encode("utf-8"))
+        write_atomic(self.path / "game.json", json.dumps(record, ensure_ascii=False, indent=1).encode("utf-8"))
 
     def load(self):
         """Return the saved session and journal, ready to continue."""

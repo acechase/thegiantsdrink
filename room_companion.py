@@ -53,6 +53,13 @@ AVATAR_STYLE = (
     "standing in three-quarter view and filling a tall frame, head and feet in view. "
     f"{OUTFIT_RULES} Set the figure against a plain, softly mottled parchment-and-slate wash with no setting."
 )
+CUTSCENE_STYLE = (
+    f"Landscape story illustration for a surreal fairy-tale castle exploration game, {PAINTING}. Show {PLAYER_LOOK}. "
+    "Use an outside camera angle and show the character in the middle of the action, with their hands, footing, "
+    "and the thing they are interacting with clear. Capture one moment of motion. Use the supplied setting and "
+    "only the visible objects and equipment described. The action may move an object or change how it is held. "
+    f"{OUTFIT_RULES}"
+)
 
 
 def _image_request(model, prompt, size="1536x1024"):
@@ -155,6 +162,34 @@ class Avatar:
         return _image_request(model, f"{AVATAR_STYLE}\n{_outfit_prompt(self.worn, self.carried)}", "1024x1536")
 
 
+@dataclass(frozen=True)
+class Cutscene:
+    """A successful action with the setting and outfit captured when it began."""
+
+    scene: Scene
+    outfit: Avatar
+    action: str
+    description: str
+    kind = "cutscene"
+    items = scenery = exits = ()
+
+    @property
+    def name(self):
+        """Identify the discovery's original location."""
+        return f"Discovery in {self.scene.name}"
+
+    def request(self, model):
+        """Compose a cinematic moment from the actual action and equipment."""
+        prompt = (
+            f"{CUTSCENE_STYLE}\nSetting: {self.scene.name}. {self.scene.description}\n"
+            f"Visible landmarks: {', '.join(self.scene.scenery) or 'none'}. "
+            f"Visible loose items: {', '.join(self.scene.items) or 'none'}.\n"
+            f"{_outfit_prompt(self.outfit.worn, self.outfit.carried)}\n"
+            f"Action in progress: {self.action}\nWhat the action achieves: {self.description}"
+        )
+        return _image_request(model, prompt)
+
+
 def generate_image(payload):
     """Return a JPEG from OpenAI or raise a player-readable error."""
     try:
@@ -188,9 +223,9 @@ def generate_image(payload):
 
 
 class RoomCompanion:
-    """Render one scene at a time, keeping only the latest waiting scene."""
+    """Render illustrations in the background and reuse completed paintings."""
 
-    def __init__(self, cache_dir, model, *, meter=None):
+    def __init__(self, cache_dir, model, *, meter=None, cutscenes=False, keep_pending=False):
         """Prepare a disk cache and start an idle image worker that bills paintings to a game's meter."""
         self.cache_dir = Path(cache_dir)
         self.model = model
@@ -200,10 +235,13 @@ class RoomCompanion:
         self._scene = None
         self._description = ""
         self._key = self._active = None
+        self._keep_pending = keep_pending
+        self._pending = {}
         self._status = "waiting"
         self._error = ""
         self._worker = threading.Thread(target=self._work, name="room-illustrator", daemon=True)
         self._worker.start()
+        self.cutscenes = RoomCompanion(cache_dir, model, meter=meter, keep_pending=True) if cutscenes else None
 
     def show(self, room, *, description=None):
         """Publish a room immediately, coalescing duplicate and superseded requests."""
@@ -214,7 +252,7 @@ class RoomCompanion:
         self.present(portrait, portrait.description)
 
     def present(self, scene, description=""):
-        """Show any illustratable scene: a room, a portrait or the character card."""
+        """Present an illustration and queue it if it has yet to be painted."""
         with self._condition:
             if self._closed:
                 return
@@ -224,6 +262,8 @@ class RoomCompanion:
             self._scene = scene
             self._key = hashlib.sha256(json.dumps(scene.request(self.model), sort_keys=True).encode()).hexdigest()
             self._error = ""
+            if not self._keep_pending:
+                self._pending.clear()
             try:
                 cached = self._file(self._key).is_file()
             except OSError:
@@ -234,7 +274,13 @@ class RoomCompanion:
                 self._status = "generating"
             else:
                 self._status = "queued"
+                self._pending[self._key] = scene
             self._condition.notify_all()
+
+    def journal_art(self, *, cutscene=False):
+        """Return the key of the illustration to associate with this turn."""
+        art = (self.cutscenes if cutscene and self.cutscenes else self).snapshot()
+        return {"key": art["key"], "kind": art["kind"]} if art.get("key") else None
 
     def snapshot(self):
         """Return public display data without credentials or local paths."""
@@ -254,7 +300,7 @@ class RoomCompanion:
         with self._condition:
             if self._key == key and self._status in ("ready", "cached"):
                 self._status = "error"
-                self._error = "The cached illustration could not be read. Try illustrating the room again."
+                self._error = "The cached illustration could not be read. Try again."
 
     def retry(self, key):
         """Retry a failed scene only if it is still on screen."""
@@ -262,6 +308,7 @@ class RoomCompanion:
             if self._key == key and self._status == "error" and not self._closed:
                 self._error = ""
                 self._status = "queued"
+                self._pending[key] = self._scene
                 self._condition.notify_all()
                 return True
             return False
@@ -271,6 +318,8 @@ class RoomCompanion:
         with self._condition:
             self._closed = True
             self._condition.notify_all()
+        if self.cutscenes:
+            self.cutscenes.close()
 
     def _file(self, key):
         return self.cache_dir / f"{key}.jpg"
@@ -292,12 +341,14 @@ class RoomCompanion:
     def _work(self):
         while True:
             with self._condition:
-                self._condition.wait_for(lambda: self._closed or self._status == "queued")
+                self._condition.wait_for(lambda: self._closed or self._pending)
                 if self._closed:
                     return
-                key = self._active = self._key
-                self._status = "generating"
-                payload = self._scene.request(self.model)
+                key = self._active = next(iter(self._pending))
+                scene = self._pending.pop(key)
+                if key == self._key:
+                    self._status = "generating"
+                payload = scene.request(self.model)
             status, error = "ready", ""
             try:
                 self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -336,7 +387,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
         if self.path == "/":
             self._send(200, "text/html; charset=utf-8", self.server.page)
         elif self.path == "/state":
-            self._send(200, "application/json", json.dumps(viewer.snapshot()).encode())
+            state = dict(viewer.snapshot(), cutscene=viewer.cutscenes.snapshot() if viewer.cutscenes else None)
+            self._send(200, "application/json", json.dumps(state).encode())
+        elif self.path == "/cutscene.js":
+            self._send(200, "text/javascript; charset=utf-8", (HERE / "cutscene.js").read_bytes())
         else:
             for illustrator in self._illustrators():
                 state = illustrator.snapshot()
@@ -352,8 +406,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def _illustrators(self):
-        avatar = getattr(self.server, "avatar", None)
-        return [self.server.viewer, *([avatar] if avatar else [])]
+        viewer = self.server.viewer
+        return [item for item in (viewer, viewer.cutscenes, getattr(self.server, "avatar", None)) if item]
 
     def _same_origin(self):
         return self.headers.get("Origin") == f"http://127.0.0.1:{self.server.server_port}"
@@ -395,7 +449,8 @@ def open_companion(meter=None):
         try:
             cache_dir = HERE / ".room-art"
             cache_dir.mkdir(parents=True, exist_ok=True)
-            viewer = RoomCompanion(cache_dir, os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL, meter=meter)
+            viewer = RoomCompanion(cache_dir, os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL, meter=meter,
+                                   cutscenes=True)
         except OSError:
             print("[Companion] The image cache could not be opened. Continuing in the terminal.", flush=True)
             yield None

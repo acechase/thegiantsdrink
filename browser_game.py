@@ -11,6 +11,7 @@ from http.server import ThreadingHTTPServer
 
 from playthrough import render
 from room_companion import DEFAULT_IMAGE_MODEL, HERE, Avatar, RoomCompanion, ViewerHandler, launch_tab
+from story_catalog import StoryError, bundle_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class BrowserGame:
                 "turn": len(self.journal), "room": self.room, "art": self.viewer.snapshot(),
                 "latest": self.journal[-1] if self.journal else None, "pending": self.pending,
                 "save": self.saved, "avatar": self.avatar.snapshot() if self.avatar else None,
+                "cutscene": self.viewer.cutscenes.snapshot() if self.viewer.cutscenes else None,
                 "tokens": self.session.meter.snapshot(),
             }
 
@@ -97,6 +99,11 @@ class BrowserGame:
             end = len(self.journal) if before is None else min(before - 1, len(self.journal))
             start = max(0, end - 50)
             return {"entries": self.journal[start:end][::-1], "more": start > 0}
+
+    def nomination_preview(self):
+        """Read a nomination from the committed session while the worker stages any changes."""
+        with self.condition:
+            return bundle_bytes(self.session.story_nomination())
 
     def _publish_event(self, event):
         with self.condition:
@@ -132,12 +139,12 @@ class BrowserGame:
                 del entry["activity"]
                 if session is None:
                     entry["events"] = [{"kind": "error", "text": "The turn was interrupted. You can try that action again."}]
+                    entry["art"] = self.viewer.journal_art()
                 else:
                     self.session, self.room = session, room
                     session.show(self.viewer)
                     self._dress(session)
-                art = self.viewer.snapshot()
-                entry["art"] = {"key": art["key"], "kind": art["kind"]} if art.get("key") else None
+                    entry["art"] = session.turn_art(self.viewer)
                 self.journal.append(entry)
                 self.pending = None
                 session, journal = self.session, list(self.journal)
@@ -188,6 +195,13 @@ class PlayHandler(ViewerHandler):
             self._json(200, self.server.game.snapshot())
         elif self.path == "/playthrough":
             self._send(200, "text/html; charset=utf-8", self.server.game.playthrough().encode("utf-8"))
+        elif self.path == "/nomination":
+            try:
+                body = self.server.game.nomination_preview()
+            except StoryError as exc:
+                self._json(409, {"error": str(exc)})
+            else:
+                self._send(200, "application/json; charset=utf-8", body)
         elif self.path in self.server.assets:
             self._send(200, *self.server.assets[self.path])
         elif self.path.startswith("/journal"):
@@ -230,7 +244,7 @@ def play_server(session, cache_dir, model, *, journal=None, store=None):
     assets = {"/play.js": ("text/javascript; charset=utf-8", (HERE / "play.js").read_bytes()),
               "/play.css": ("text/css; charset=utf-8", (HERE / "play.css").read_bytes())}
     with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
-        server.viewer = RoomCompanion(cache_dir, model, meter=session.meter)
+        server.viewer = RoomCompanion(cache_dir, model, meter=session.meter, cutscenes=True)
         server.avatar = RoomCompanion(cache_dir, model, meter=session.meter)
         server.game = BrowserGame(session, server.viewer, avatar=server.avatar, journal=journal, store=store)
         server.page, server.assets = page, assets

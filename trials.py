@@ -29,6 +29,8 @@ class FallingStairs:
 
     def resolve(self, intent, game, rooms):
         """Cross and remember the route for subsequent lives."""
+        if not self.mastered:
+            game.discover("cross", "banister", "Edge up along the banister as the center of the staircase falls away")
         self.mastered = True
         return "You press close to the carved rail. The center drops away under empty air. " + game.move("up", rooms)
 
@@ -99,12 +101,16 @@ class GiantTable:
             sides = {"left", "right"} if side == "both" else {side}
             if sides <= self.spilled:
                 return "The empty glass rolls against your foot."
+            changed = sides - self.spilled
+            cups = "both cups" if len(changed) == 2 else f"the {next(iter(changed))} cup"
+            game.discover("spill", "giant's cups", f"Tip over {cups} on the giant's silver tray")
             self.spilled.update(sides)
             rooms[game.current_room].seen_details.clear()
             return self.prose()
         if intent == "enter reflection":
             if len(self.spilled) == 2:
                 game.giant_defeated = True
+                game.discover("enter", "giant's reflection", "Step through the giant's reflected eye in the silver tray")
                 return ("You step through the eye in the silver. For one instant you see yourself from his side of "
                         "the table, small and terribly determined. When you turn back, the giant's chair is empty.")
             return "Your hand meets cold silver. Each upright cup pins part of the giant's reflection to the tray."

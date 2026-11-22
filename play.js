@@ -1,11 +1,13 @@
 "use strict";
 
 const el = id => document.getElementById(id);
+const cutscenes = window.createCutscenePlayer();
 const arrows = {north: "↑", south: "↓", east: "→", west: "←", up: "↗", down: "↙"};
 const title = text => text[0].toUpperCase() + text.slice(1);
 let state, connected = false, posting = false, acknowledged = false;
 let drawer = "", drawerTrigger, journalRequest = 0, oldest = null, workingSince = null;
 let imageURL = null, activeImage = null, entrySignature = "", avatarURL = null, avatarLoading = null;
+let nominationText = "", loadingNomination = false;
 
 function remember(key, value) {
   try {
@@ -36,7 +38,8 @@ function commandButton(label, command, css = "") {
   return item;
 }
 function renderRoom(room) {
-  text("chapter", room.chapter + " · Life " + room.life);
+  text("chapter", room.chapter + " · Life " + room.life + (room.story_edition ? " · Replay " + room.story_edition : ""));
+  el("nominate").hidden = !room.can_nominate;
   el("lesson-list").replaceChildren(...room.lessons.map(lesson => node("li", lesson)));
   el("memories").hidden = drawer !== "journal" || !room.lessons.length;
   text("name", room.name);
@@ -67,8 +70,12 @@ function renderArt(art) {
     ? {queued: "Portrait queued", generating: "Painting your portrait…", cached: shown, ready: shown, error: art.error}
     : {waiting: "Waiting for the room…", queued: "Illustration queued", generating: "Illustrating this room…",
       cached: "Cached room illustration", ready: "Room illustration", error: art.error};
-  text("art-status", statuses[art.status] || "");
-  el("retry").hidden = art.status !== "error";
+  const cutscene = cutscenes.current;
+  const retryArt = cutscene?.status === "error" ? cutscene : art;
+  const paintingCutscene = ["queued", "generating"].includes(cutscene?.status);
+  text("art-status", paintingCutscene ? "Painting discovery…" : retryArt.error || statuses[art.status] || "");
+  el("retry").hidden = retryArt.status !== "error";
+  text("retry", retryArt.kind === "cutscene" ? "Retry cutscene" : "Retry illustration");
   if (art.image === imageURL) return;
   imageURL = art.image;
   activeImage?.remove();
@@ -189,9 +196,20 @@ function renderBag() {
   const list = node("div", "", "carried");
   const worn = new Set(state?.room.worn || []);
   list.append(...items.map(name => {
+    const contents = state.room.containers?.[name];
     const item = commandButton(name, "examine " + name);
     if (worn.has(name)) item.append(" ", node("em", "worn"));
-    return item;
+    if (!contents) return item;
+    const bag = node("div", "", "carried-container");
+    bag.append(item);
+    if (contents.length) {
+      const stored = node("div", "", "stored-items");
+      stored.append(...contents.map(gear => commandButton("Take out " + gear, "take " + gear + " from " + name)));
+      bag.append(stored);
+    } else {
+      item.append(" ", node("em", "empty"));
+    }
+    return bag;
   }));
   el("drawer-body").replaceChildren(items.length ? list : node("p", "You’re carrying nothing."));
 }
@@ -289,6 +307,10 @@ async function deliver() {
   }
 }
 function submit(command, typed = false) {
+  if (command.trim().toLowerCase() === "nominate") {
+    previewNomination();
+    return;
+  }
   if (el("act").disabled || !command.trim()) return;
   outbox = {id: crypto.randomUUID(), after: state.turn, command: command.trim()};
   remember("outbox", JSON.stringify(outbox));
@@ -299,6 +321,25 @@ function submit(command, typed = false) {
   text("notice", "");
   controls();
   deliver();
+}
+
+async function previewNomination() {
+  if (loadingNomination || el("nomination").open) return;
+  loadingNomination = true;
+  el("nominate").disabled = true;
+  text("notice", "");
+  try {
+    const response = await fetch("/nomination", {cache: "no-store"});
+    if (!response.ok) throw Error((await response.json()).error);
+    nominationText = await response.text();
+    text("nomination-preview", nominationText);
+    el("nomination").showModal();
+  } catch (error) {
+    text("notice", error.message || "Could not preview the nomination. Try again.");
+  } finally {
+    loadingNomination = false;
+    el("nominate").disabled = false;
+  }
 }
 async function poll() {
   try {
@@ -317,6 +358,7 @@ async function poll() {
       if (drawer === "bag") renderBag();
       if (drawer === "journal") loadJournal();
     }
+    cutscenes.update(state.cutscene, state.art.key);
     renderArt(state.art);
     renderAvatar(state.avatar);
     renderSave(state.save);
@@ -340,6 +382,16 @@ el("form").onsubmit = e => { e.preventDefault(); submit(el("command").value, tru
 el("command").oninput = () => remember("draft", el("command").value);
 el("bag").onclick = () => openDrawer("bag", el("bag"));
 el("history").onclick = () => openDrawer("journal", el("history"));
+el("nominate").onclick = previewNomination;
+el("download-nomination").onclick = () => {
+  const url = URL.createObjectURL(new Blob([nominationText], {type: "application/json"}));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "storyline-nomination.json";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  el("nomination").close();
+};
 el("close").onclick = closeDrawer;
 el("older").onclick = () => loadJournal(true);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && drawer) closeDrawer(); });
@@ -351,8 +403,10 @@ el("avatar-retry").onclick = async () => {
 el("retry").onclick = async () => {
   el("retry").disabled = true;
   text("notice", "");
+  const cutscene = cutscenes.current;
+  const key = cutscene?.status === "error" ? cutscene.key : state.art.key;
   try {
-    const res = await fetch("/retry/" + state.art.key, {method: "POST"});
+    const res = await fetch("/retry/" + key, {method: "POST"});
     if (!res.ok && res.status !== 409) throw Error();
   } catch { text("notice", "Could not request the illustration. Try again when connected."); }
   finally { el("retry").disabled = false; }
