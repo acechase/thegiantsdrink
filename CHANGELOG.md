@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Crafted gear can store items inside and carry attachments outside. Nested gear stays together across drops, pickups, and saves. The inventory drawer supports both operations and distinguishes identically named items.
+- Resuming a game repairs older tapestries that were described as finished bags. Browser games can reopen at a chosen local port using `--browser --port PORT`.
 - Command parsing and room narration now call OpenAI directly. Set `OPENAI_API_KEY` to play and optionally choose a model with `OPENAI_MODEL`.
 - Anything described to the player can be acted on. When no written rule applies, the model judges the attempt, and the engine applies the result: taking the object or a piece of it, changing it, destroying it, or placing an item there. The room description is rewritten so the change persists.
 - Added `drop` and `search` commands, portable dungeon chains, and clues that searching or striking the dungeon's walls and rings reveals.

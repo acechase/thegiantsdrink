@@ -4,6 +4,15 @@ import re
 from characters import STOCK
 from environment_actions import resolve_environment
 from game_world import OPPOSITE, find_among, find_object, noun
+from game_world.gear import (
+    GearError,
+    WornEquipment,
+    choose_item,
+    default_capabilities,
+    item_labels,
+    visible_attachments,
+    walk_items,
+)
 from trials import FallingStairs, GiantTable
 
 
@@ -37,7 +46,7 @@ class GameState:
         self.table_deaths = 0
         self.lessons = []
         self.last_lesson = ""
-        self.worn = {}  # Carried item name -> how the player wears it, in one second-person sentence.
+        self.next_item_number = 1
         self.trail = []  # (direction or "woke", room name) for each arrival, most recent last.
         self.breakthrough = None  # A room whose obstacle the player has just overcome.
         self.discovery = None  # A successful technique from the current command.
@@ -52,24 +61,34 @@ class GameState:
 
     def wearing(self):
         """Return each carried item the player has on, with how it is worn."""
-        return [(item, self.worn[item.name]) for item in self.inventory if item.name in self.worn]
+        return [(item, item.worn) for item in self.inventory if item.worn]
 
-    def prune_worn(self):
-        """Forget worn state for anything that has left the player's possession."""
-        held = {item.name for item in self.inventory}
-        self.worn = {name: how for name, how in self.worn.items() if name in held}
+    @property
+    def worn(self):
+        """Describe worn equipment by its player-facing name for prompts and older clients."""
+        self.number_items(self.inventory)
+        return WornEquipment(self.inventory)
+
+    def number_items(self, roots):
+        """Give newly encountered items permanent numbers for commands and saves."""
+        for item in walk_items(roots):
+            if item.number is None:
+                item.number = self.next_item_number
+                self.next_item_number += 1
 
     def carried_names(self):
-        """Include packed items when reserving the names of carried gear."""
-        return [item.name for held in self.inventory for item in (held, *(held.contents or ()))]
+        """Reserve every possessed item, including gear stored or attached several levels down."""
+        return [item.name for item in walk_items(self.inventory)]
 
-    def make_tapestry_bag(self):
+    def make_tapestry_bag(self, material="tapestry"):
         """Make a container from a tapestry the player has already taken."""
-        tapestry = find_object("tapestry", self.inventory)
+        tapestry = choose_item(material, self.inventory)
         if tapestry is None:
             return "Take a tapestry first, then turn it into a bag."
-        if tapestry.contents is not None or any(item.name == "tapestry bag" for item in self.inventory):
+        if tapestry.contents is not None:
             return "You already have a tapestry bag."
+        if tapestry.puzzle_arc:
+            return tapestry.description
         self.convert_tapestry(tapestry)
         tapestry.description = "A roomy fabric bag with knotted corners and a shoulder strap."
         self.discover("craft", "tapestry", "Gather and knot the tapestry into a shoulder bag")
@@ -77,28 +96,31 @@ class GameState:
 
     def convert_tapestry(self, tapestry):
         """Preserve the item's identity and worn state when its name changes."""
-        worn = self.worn.pop(tapestry.name, None) if tapestry in self.inventory else None
         tapestry.make_tapestry_bag()
-        if worn:
-            self.worn[tapestry.name] = "The tapestry bag hangs from your shoulders by its knotted strap."
+        if tapestry.worn:
+            tapestry.worn = "The tapestry bag hangs from your shoulders by its knotted strap."
 
-    def transfer_bag_item(self, item_name, bag_name, *, unpack=False):
-        """Move one item between the player's inventory and a carried bag."""
-        bag = find_object(bag_name, self.inventory)
-        if bag is None or bag.contents is None:
-            return f"You're not carrying a container called {bag_name}."
-        source, destination = (bag.contents, self.inventory) if unpack else (self.inventory, bag.contents)
-        item = find_object(item_name, source)
+    def craft_gear(self, material, product, room, command, report):
+        """Resolve familiar forms directly and adjudicate the feasibility of other designs."""
+        item = choose_item(material, self.inventory)
         if item is None:
-            return (f"The {bag.name} doesn't contain {item_name}." if unpack else f"You're not carrying {item_name}.")
-        if item.contents is not None:
-            return "Keep containers separate."
-        source.remove(item)
-        self.worn.pop(item.name, None)
-        destination.append(item)
-        if unpack:
-            return f"You take the {item.name} out of the {bag.name}."
-        return f"You put the {item.name} in the {bag.name}."
+            return f"Pick up the {material} before crafting with it."
+        if item.puzzle_arc:
+            return item.description
+        source = item.name.split()[-1]
+        form = product.split()[-1]
+        cloth = source in ("cloak", "scarf", "cloth", "linen", "tapestry", "tapestries")
+        if ((cloth and form in ("bag", "backpack", "satchel", "pouch", "sack"))
+                or (source in ("reeds", "wicker", "willow") and form == "basket")):
+            storage, points = default_capabilities(product)
+            original = item.name
+            item.refashion(product, storage=storage, attachment_points=points)
+            item.description = f"A {product} fashioned from the {original}."
+            if item.worn:
+                item.worn = f"You wear the {product}."
+            self.discover("craft", product, command)
+            return f"You fashion the {original} into a {product}."
+        return resolve_environment(self, room, command, item.reference, report=report, craft_goal=product)
 
     def appearance(self):
         """Describe the player and what they wear and carry."""
@@ -107,11 +129,12 @@ class GameState:
             return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
         worn = [how for _, how in self.wearing()]
-        held = [item.name for item in self.inventory if item.name not in self.worn]
+        held = [item.name for item in self.inventory if not item.worn]
         return " ".join([
             "You look yourself over.", self.character.description,
             *(worn or ["You have nothing from the castle on."]),
             f"You carry {listed(held)}." if held else "Your hands are empty.",
+            *(fact for item in self.inventory for fact in visible_attachments(item)),
         ])
 
     def die(self, cause, lesson, checkpoint):
@@ -180,6 +203,7 @@ class GameState:
         found = find_among(item_name, room.items, self.inventory, room.scenery)
         item = found if found in room.items else None
         if item:
+            item = choose_item(item_name, room.items)
             self.inventory.append(item)
             room.items.remove(item)
             item.room_text = ""
@@ -187,27 +211,28 @@ class GameState:
                 room.departed.append(item)
             return f"You take the {item.name}."
         held = found if found in self.inventory else None
-        if held and self._taking_off(held, command):
-            return self._take_off(held)
         if held:
+            held = choose_item(item_name, self.inventory)
+            if self._taking_off(held, command):
+                return self._take_off(held)
             return f"You're already carrying the {held.name}."
         return resolve_environment(self, room, command, item_name, report=report,
                                    fallback="There is no such item here." if not room.landmark(item_name) else None)
 
     def _taking_off(self, item, command):
-        return item.name in self.worn and re.search(r"\b(?:off|remove|doff)\b", (command or "").casefold())
+        return item.worn and re.search(r"\b(?:off|remove|doff)\b", (command or "").casefold())
 
     def _take_off(self, item):
-        del self.worn[item.name]
+        item.worn = ""
         return f"You take off the {item.name} and carry it."
 
     def drop_item(self, reference, world_map):
         """Return a carried object to the current room."""
-        item = find_object(reference, self.inventory)
+        item = choose_item(reference, self.inventory)
         if not item:
             return f"You're not carrying the {reference}."
         self.inventory.remove(item)
-        self.worn.pop(item.name, None)
+        item.worn = ""
         room = world_map[self.current_room]
         room.items.append(item)
         if item in room.departed:
@@ -217,18 +242,23 @@ class GameState:
     def examine(self, reference, world_map, *, command=None, report=None):
         """Inspect a carried item or an object at the player's location."""
         room = world_map[self.current_room]
-        obj = find_object(reference, [*self.inventory, *room.items, *room.scenery])
+        labels = item_labels([*self.inventory, *room.items, *room.scenery])
+        obj = choose_item(reference, labels)
         if not obj:
             return resolve_environment(self, room, command, reference, report=report)
-        if obj.contents is not None:
-            contents = ", ".join(item.name for item in obj.contents)
-            return f"{obj.description} Inside: {contents}." if contents else f"{obj.description} It is empty."
         passage = room.passage
         if room.passage_open and obj.name == passage.landmark:
             return passage.visible
-        if obj in self.inventory and obj.name in self.worn:
-            return f"{obj.description} {self.worn[obj.name]}"
-        return obj.description
+        details = [obj.description]
+        if obj.contents is not None:
+            contents = ", ".join(labels[item] for item in obj.contents)
+            details.append(f"Inside: {contents}." if contents else "It is empty.")
+        if obj.attachments is not None:
+            attached = ", ".join(labels[item] for item in obj.attachments)
+            details.append(f"Attached: {attached}." if attached else "There is room to fasten something outside.")
+        if obj.worn:
+            details.append(obj.worn)
+        return " ".join(details)
 
     def investigate(self, reference, world_map, command, *, search=False, tool=None, report=None):
         """Reveal authored clues or adjudicate the player's own environmental experiment."""
@@ -268,12 +298,12 @@ class GameState:
     def use_on(self, tool_name, target_name, world_map, difficulty=1.0, *, command=None, report=None):
         """Resolve an attempted tool interaction against the current world."""
         room = world_map[self.current_room]
-        tool = find_object(tool_name, self.inventory)
+        tool = choose_item(tool_name, self.inventory)
         if not tool:
             if find_object(tool_name, room.items) or room.landmark(tool_name):
                 return f"You need to be carrying the {tool_name} first."
             return self.investigate(target_name, world_map, command, report=report)
-        target = find_object(target_name, [*room.scenery, *room.items, *self.inventory])
+        target = choose_item(target_name, [*room.scenery, *room.items, *self.inventory])
         if not target:
             return self.investigate(target_name, world_map, command, tool=tool, report=report)
 
@@ -308,7 +338,7 @@ class GameState:
         if world_map is None or not words or (words[0] == "use" and find_object(" ".join(words[1:]), [item]) is item):
             return prompt
         room = world_map[self.current_room]
-        return resolve_environment(self, room, command, item.name, report=report, fallback=prompt)
+        return resolve_environment(self, room, command, item.reference, report=report, fallback=prompt)
 
     def use_item(self, item_name, difficulty=1.0, *, world_map=None, command=None, report=None):
         """Use an item from the player's inventory, triggering its effect.
@@ -319,7 +349,7 @@ class GameState:
 
         str: Description of the item's effect or error message.
         """
-        item = find_object(item_name, self.inventory)
+        item = choose_item(item_name, self.inventory)
         if not item:
             return "You can't use that item or it's not in your inventory."
         if self._taking_off(item, command):
@@ -337,6 +367,8 @@ class GameState:
             return self._improvise(item, prompt, world_map, command, report)
         if item.usable:
             if "potion" in item.name.lower():
+                if item.contents or item.attachments:
+                    raise GearError(f"Remove everything from the {item.name} first.")
                 self.inventory.remove(item)
                 self.potion_active = True
                 return "You drink the magic potion and feel a surge of strength!"
@@ -363,9 +395,9 @@ class GameState:
                 prompt = "The torch flares brightly, pushing shadows to the walls."
                 return self._improvise(item, prompt, world_map, command, report)
             elif "helm" in item.name.lower():
-                if item.name in self.worn:
+                if item.worn:
                     return f"The {item.name} is already on your head."
-                self.worn[item.name] = f"The {item.name} sits low over your brow."
+                item.worn = f"The {item.name} sits low over your brow."
                 return f"You put on the {item.name}. You feel tougher."
         return self._improvise(item, f"What would you like to use the {item.name} on?", world_map, command, report)
 
@@ -388,6 +420,7 @@ class GameState:
         room = world_map[self.current_room]
         description = description or room.prose()
         if room.items:
-            description += " You see: " + ", ".join([item.name for item in room.items])
+            labels = item_labels([*self.inventory, *room.items, *room.scenery])
+            description += " You see: " + ", ".join(labels[item] for item in room.items)
         description += f"\nExits: {', '.join(room.visible_exits)}"
         return description

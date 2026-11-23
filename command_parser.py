@@ -3,7 +3,9 @@ import json
 import re
 from typing import NamedTuple
 
-from game_world import find_object, noun
+from game_world import noun
+from game_world.gear import ATTACHMENT_FEATURES, ATTACHMENT_FORMS, STORAGE_FEATURES, STORAGE_FORMS, walk_items
+from game_world.names import TAPESTRY_BAG_NAMES, matching_objects
 from openai_client import complete
 
 
@@ -15,12 +17,16 @@ class ToolUse(NamedTuple):
 
 
 SYSTEM_PROMPT = """Interpret one player's command for a castle exploration game. Return only a JSON object.
-Actions: move, take, drop, use, use_on, examine, search, interact, attack, check, look, self, help, quit, trial, unknown.
+Actions: move, take, drop, use, use_on, craft, pack, unpack, attach, unfasten, examine, search, interact,
+attack, check, look, self, help, quit, trial, unknown.
 Use "look" with target "around" only for the whole room. Looking at, inspecting or examining an object is "examine".
 For "take", "use", "examine", or "attack", target is the object name. For "check", target is "inventory".
 Use "self" with target "appearance" when the player looks at or asks about their own appearance, body or outfit.
 For "move", target is north, south, east, west, up or down. For "help" and "quit", use "commands" and "game".
 When the player uses an object to do something to another object, preserve BOTH nouns, even if the attempt may fail.
+For inventory moves use pack, unpack, attach or unfasten with tool = item and target = host item.
+For fashioning storage or attachment points use craft with tool = source material or item being modified,
+target = the proposed result (e.g. "basket" or "belt loop"). Use interact for other improvised alterations.
 Examples: "listen for hollow stone by tapping it with my staff" -> {"action":"use_on","tool":"staff","target":"stone wall"}
 "read the book" -> {"action":"use","target":"book"}; "study the book's cover" -> {"action":"examine","target":"book"}.
 Acting on yourself with an item is "use": "wrap the cloak around my shoulders" -> {"action":"use","target":"cloak"}.
@@ -34,6 +40,7 @@ consent to drink. If the player declines to drink and performs another action, i
 If you cannot identify an action, return {"action":"unknown","target":""}."""
 
 command_cache = {}
+CRAFT_FORMS = STORAGE_FORMS | ATTACHMENT_FORMS | STORAGE_FEATURES | ATTACHMENT_FEATURES | {"carrier", "container", "holder"}
 SIMPLE_COMMANDS = {
     "look": ("look", "around"),
     "look around": ("look", "around"),
@@ -52,7 +59,32 @@ SIMPLE_COMMANDS = {
 }
 
 
-def direct_command(command, objects):
+def craft_command(text):
+    """Recognize a proposed form and its source; feasibility belongs to the simulation."""
+    text = re.sub(r"^can (?:i|we) ", "", text)
+    match = re.fullmatch(r"use (.+?) to (?:make|craft|fashion|create|sew) (.+)", text)
+    if match:
+        material, product = match.groups()
+    else:
+        match = re.fullmatch(r"(?:make|craft|fashion|create|stitch|sew|weave|fold|tie|braid|knot) (.+?) "
+                             r"(?:out of|from|onto|on) (.+)", text)
+        if match:
+            product, material = match.groups()
+        else:
+            match = re.fullmatch(r"(?:turn|make|craft|fashion|sew|weave|fold|braid|knot|tie) (.+?) into (.+)", text)
+            if not match:
+                return None
+            material, product = match.groups()
+    product = noun(product.split(" for ", 1)[0])
+    material = noun(material)
+    if material.split(" #", 1)[0] in ("tapestry", "tapestries") and product in TAPESTRY_BAG_NAMES:
+        return "craft_bag", material
+    if product.rsplit(" ", 1)[-1] in CRAFT_FORMS:
+        return "craft", ToolUse(material, product)
+    return None
+
+
+def direct_command(command, objects, inventory=()):
     """Resolve common unambiguous commands immediately."""
     text = " ".join("the" if word == "teh" else word for word in command.casefold().strip(" .!?").split())
     if text in SIMPLE_COMMANDS:
@@ -60,42 +92,41 @@ def direct_command(command, objects):
     match = re.fullmatch(r"(?:go |move )?(north|south|east|west|up|down)", text)
     if match:
         return "move", match[1]
-    if (re.match(r"(?:can (?:i|we) )?(?:make|craft|fashion|create|sew|fold|knot|tie|turn|use)\b", text)
-            and re.search(r"\btapestr(?:y|ies)\b", text)
-            and re.search(r"\b(?:make|craft|fashion|create|sew|into) (?:a |the )?"
-                          r"(?:(?:makeshift|tapestry) )?(?:bag|sack|pouch)\b",
-                          text)):
-        return "craft_bag", "tapestry"
+    crafting = craft_command(text)
+    if crafting:
+        return crafting
     for verb, pattern in (
         ("pack", r"(?:put|place|pack|store|stow) (.+?) (?:in|into|inside) (.+)"),
-        ("unpack", r"(?:take|remove|retrieve|get) (.+?) (?:out of|from) (.+)"),
+        ("unpack", r"(?:take|remove|retrieve|get) (.+?) out of (.+)"),
+        ("retrieve", r"(?:take|remove|retrieve|get) (.+?) from (.+)"),
+        ("attach", r"(?:attach|clip|fasten|hang|strap|tie|hook|buckle|lash) (.+?) (?:to|onto|on|from) (.+)"),
+        ("unfasten", r"(?:detach|unclip|unfasten|unhook|untie|unstrap|take) (.+?) (?:off of|off|from) (.+)"),
     ):
         match = re.fullmatch(pattern, text)
         if match:
             item, container = match.groups()
-            bag = find_object(container, objects)
-            if (bag and bag.contents is not None) or noun(container) in ("bag", "sack", "tapestry bag", "makeshift bag"):
+            hosts = matching_objects(container, objects)
+            if (any(host.contents is not None or host.attachments is not None or host in inventory for host in hosts)
+                    or noun(container).rsplit(" ", 1)[-1] in CRAFT_FORMS):
                 return verb, ToolUse(noun(item), noun(container))
     match = re.fullmatch(r"(?:look|check) (?:in|inside) (.+)", text)
     if match:
-        bag = find_object(match[1], objects)
-        if bag and bag.contents is not None:
-            return "examine", bag.name
+        if any(bag.contents is not None for bag in matching_objects(match[1], objects)):
+            return "examine", noun(match[1])
     match = re.fullmatch(r"(look at|examine|inspect|x|pick up|take|get|drop|search|use) (.+)", text)
     if not match:
         return None
     verb, reference = match.groups()
     if verb == "use" and " on " in reference:
         tool, subject = reference.split(" on ", 1)
-        if find_object(tool, objects) and find_object(subject, objects):
+        if matching_objects(tool, objects) and matching_objects(subject, objects):
             return "use_on", ToolUse(noun(tool), noun(subject))
-    obj = find_object(reference, objects)
-    if obj:
+    if matching_objects(reference, objects):
         if verb in ("pick up", "take", "get"):
-            return "take", obj.name
+            return "take", noun(reference)
         if verb in ("use", "drop", "search"):
-            return verb, obj.name
-        return "examine", obj.name
+            return verb, noun(reference)
+        return "examine", noun(reference)
     return None
 
 
@@ -105,14 +136,14 @@ def parse_command(command, room=None, inventory=(), *, report=None):
     Model interpretations can depend on the room, visible objects and held tools.
     The simulation checks the resulting intent before it changes any game state.
     """
-    objects = [*inventory, *room.items, *room.scenery] if room else list(inventory)
+    objects = list(walk_items([*inventory, *room.items, *room.scenery] if room else inventory))
     trial = room.trial if room else None
     if trial:
         intent = trial.interpret(" ".join(command.casefold().strip(" .!").split()))
         if intent:
             return "trial", intent
 
-    direct = direct_command(command, objects)
+    direct = direct_command(command, objects, inventory)
     if direct:
         return direct
 
@@ -125,6 +156,9 @@ def parse_command(command, room=None, inventory=(), *, report=None):
             "items": [obj.name for obj in room.items],
             "scenery": [obj.name for obj in room.scenery],
             "carrying": [obj.name for obj in inventory],
+            "gear": [{"item": obj.name, "inside": [i.name for i in obj.contents or ()],
+                      "attached": [i.name for i in obj.attachments or ()]} for obj in objects
+                     if obj.contents is not None or obj.attachments is not None],
         }
         if trial:
             scene["trial_intents"] = trial.intents
@@ -165,7 +199,7 @@ def extract_action_target(text):
             data = json.loads(text[start:end])
             action = data.get("action")
             target = data.get("target")
-            if action == "use_on":
+            if action in ("use_on", "craft", "pack", "unpack", "attach", "unfasten"):
                 tool = data.get("tool")
                 if isinstance(tool, str) and isinstance(target, str) and noun(tool) and noun(target):
                     return action, ToolUse(noun(tool), noun(target))

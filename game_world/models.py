@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
 
+from .gear import GearError, default_capabilities
 from .names import find_object, noun
 
 DIRECTIONS = ("north", "south", "east", "west", "up", "down")
@@ -86,10 +87,14 @@ class Item:
     # Class defaults also cover items loaded from saves that predate containers and generated arcs.
     puzzle_arc: int = 0
     contents: Optional[list["Item"]] = None
+    attachments: Optional[list["Item"]] = None
+    number: Optional[int] = None
+    worn: str = ""
 
     def __init__(
         self, name: str, description: str, usable: bool = False, *, aliases: tuple[str, ...] = (),
         room_text: str = "", discovery: Optional[Discovery] = None,
+        storage: Optional[bool] = None, attachment_points: Optional[bool] = None,
     ):
         """Describe the object, the names it answers to, and any written discovery."""
         self.name = name
@@ -98,12 +103,41 @@ class Item:
         self.aliases = aliases
         self.room_text = room_text
         self.discovery = discovery
+        inside, outside = default_capabilities(name)
+        self.contents = [] if (inside if storage is None else storage) else None
+        self.attachments = [] if (outside if attachment_points is None else attachment_points) else None
+
+    @property
+    def reference(self):
+        """Return an unambiguous command reference for an item encountered in play."""
+        return f"{self.name} #{self.number}" if self.number is not None else self.name
+
+    def check_form(self, storage, attachment_points):
+        """Check that changing capabilities would leave every child with a valid location."""
+        if self.contents and not storage:
+            raise GearError(f"Empty the {self.name} before changing its shape.")
+        if self.attachments and not attachment_points:
+            raise GearError(f"Unfasten the attachments from the {self.name} first.")
+
+    def refashion(self, name, *, storage, attachment_points):
+        """Apply a crafted form in place, preserving identity, children, and earlier names."""
+        self.check_form(storage, attachment_points)
+        if name != self.name:
+            self.aliases = tuple(dict.fromkeys((*self.aliases, self.name)))
+            self.name = name
+        if storage and self.contents is None:
+            self.contents = []
+        if attachment_points and self.attachments is None:
+            self.attachments = []
+        if not storage:
+            self.contents = None
+        if not attachment_points:
+            self.attachments = None
 
     def make_tapestry_bag(self):
         """Keep the same object while turning a tapestry into a usable container."""
-        self.aliases = tuple(dict.fromkeys((*self.aliases, self.name, "tapestry", "bag", "makeshift bag", "sack")))
-        self.name = "tapestry bag"
-        self.contents = []
+        self.aliases = tuple(dict.fromkeys((*self.aliases, self.name, "tapestry")))
+        self.refashion("tapestry bag", storage=True, attachment_points=True)
 
 
 class Room:

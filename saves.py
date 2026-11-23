@@ -65,6 +65,8 @@ def _upgrade(session):
     from content_generator import ContentGenerator
     from game_session import GameSession
     from game_world import Room
+    from game_world.gear import default_capabilities, walk_items
+    from game_world.names import BAG_NOUN_PATTERN
     from saga import Saga
     from simulation_engine import GameState
 
@@ -74,16 +76,30 @@ def _upgrade(session):
         _fill_missing(getattr(session, part), fresh)
     for room in session.rooms.values():
         _fill_missing(room, Room(room.name, ""))
-    # Older adjudication could describe a completed bag while leaving the object as a tapestry.
-    for items in (session.game.inventory, *(room.items for room in session.rooms.values())):
-        for item in items:
-            if (item.name in ("tapestry", "tapestries") and item.contents is None
-                    and re.search(
-                        r"\b(?:(?:into|forms?|forming|becomes?)\b[^.!?]{0,70}\b(?:bag|sack|pouch)"
-                        r"|(?:bag|sack|pouch) (?:made|fashioned|stitched|knotted) from (?:the |a )?tapestr(?:y|ies))\b",
-                        item.description, re.IGNORECASE
-                    )):
-                session.game.convert_tapestry(item)
+    # Former snapshots keyed wearing by name. Restore each entry to one carried instance.
+    old_worn = vars(session.game).pop("worn", {})
+    for item in session.game.inventory:
+        if item.name in old_worn:
+            item.worn = old_worn.pop(item.name)
+
+    roots = list(session.game.inventory)
+    for room in session.rooms.values():
+        roots.extend([*room.items, *room.scenery])
+    for item in walk_items(roots):
+        inside, outside = default_capabilities(item.name)
+        if "contents" not in vars(item) and inside:
+            item.contents = []
+        if "attachments" not in vars(item) and outside:
+            item.attachments = []
+        # Older adjudication sometimes left a completed tapestry bag as a piece of cloth.
+        if (item.name in ("tapestry", "tapestries") and item.contents is None
+                and re.search(
+                    rf"\b(?:(?:into|forms?|forming|becomes?)\b[^.!?]{{0,70}}\b{BAG_NOUN_PATTERN}"
+                    rf"|{BAG_NOUN_PATTERN} (?:made|fashioned|stitched|knotted) from (?:the |a )?tapestr(?:y|ies))\b",
+                    item.description, re.IGNORECASE
+                )):
+            session.game.convert_tapestry(item)
+
 
 
 class SaveSlot:
@@ -134,10 +150,11 @@ class SaveSlot:
     def save(self, session, journal):
         """Write the world snapshot and the readable journal for the turns played so far."""
         self.path.mkdir(parents=True, exist_ok=True)
+        room = session.public_state()
         snapshot = pickle.dumps({"format": FORMAT, "session": session, "journal": journal},
                                 protocol=pickle.HIGHEST_PROTOCOL)
         write_atomic(self.path / "state.bin", _sign(_key(self.root, create=True), snapshot) + snapshot)
-        self.write_record(session.public_state(), journal, tokens=session.meter.snapshot())
+        self.write_record(room, journal, tokens=session.meter.snapshot())
 
     def write_record(self, room, journal, *, tokens=None):
         """Write game.json from a public room state, the journal and the game's token totals."""

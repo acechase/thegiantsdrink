@@ -68,7 +68,9 @@ Both browser modes listen on `127.0.0.1`. The game generates and caches illustra
 
 The first time you discover a technique, the game paints you mid-action with the equipment you had when you began. You can keep playing while it paints. When ready, the cutscene appears over the room illustration. Close it with **×**, or take an action that changes the room illustration to clear it. Finished cutscenes appear alongside their turns in exported playthroughs.
 
-If you’re carrying a tapestry, `make a bag from the tapestry` turns it into storage. Use `put salt in bag` to pack an item, `look in bag` to list the contents, and `take salt from bag` to retrieve it for use. The browser inventory also lists packed gear under the bag.
+A carried tapestry can become a backpack. You can also try `fashion a pouch from my cloak` or `weave the reeds into a basket`. To add an attachment point to existing gear, describe the modification, such as `sew a loop onto my satchel`.
+
+Use `put key in pouch`, `attach pouch to belt`, and `examine belt`. Dropping the belt sets down the pouch and its key together. Pick it up again, then use `take key from pouch` or `detach pouch from belt`. The browser inventory offers the same actions and shows what is inside each item and what is attached. If you have two items called “pouch,” use the numbered name shown in inventory, such as `pouch #7`.
 
 ## Choosing your character
 
@@ -96,6 +98,8 @@ Every game saves itself after each turn, in the browser and in the terminal. Eac
 ```
 
 Leave out `--browser` to resume in the terminal instead. Resuming a game you quit reopens it.
+
+To keep an existing browser bookmark after stopping the game, resume with the same port. For example, use `./.venv/bin/python main.py --browser --continue --port 8000` for a game previously served on port 8000.
 
 A **playthrough** is one self-contained HTML page with every command, outcome, death, lesson and chapter, along with the illustrations and portraits painted along the way. Open it from the **Playthrough** link while you play, or export it with `--export` to `saves/<game>/playthrough.html`. You can email the file or host it anywhere. Rooms you passed through before their illustration finished appear without a picture.
 

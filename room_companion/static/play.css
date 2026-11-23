@@ -70,8 +70,9 @@ h1 { color: var(--pine); font: normal clamp(34px, 4vw, 57px)/1.02 var(--serif); 
 #saved.failed { color: var(--rust); }
 #usage { margin: 3px 0 0; color: var(--quiet); font-size: 12px; font-variant-numeric: tabular-nums; cursor: help; }
 .carried em { color: var(--quiet); font-size: 12px; font-style: normal; }
-.carried-container { flex-basis: 100%; }
-.stored-items { display: flex; flex-wrap: wrap; gap: 4px 12px; padding-left: 16px; }
+.gear-entry { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; flex-basis: 100%; }
+.gear-entry select { font: inherit; font-size: 12px; max-width: 100%; color: var(--pine); }
+.stored-items { flex-basis: 100%; margin-left: 8px; padding-left: 10px; border-left: 1px solid var(--quiet); }
 .action { border-top: 1px solid var(--line); padding-top: 16px; }
 .byline { font-size: 13px; margin-bottom: 5px; overflow-wrap: anywhere; }
 .byline strong { color: var(--rust); }

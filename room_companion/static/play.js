@@ -188,8 +188,9 @@ function renderAvatar(avatar) {
   el("you").hidden = !avatar || state.art.kind === "portrait";
   if (!avatar) return;
   el("avatar-img").alt = state.character?.description || "";
-  const room = state.room, worn = room.worn || [];
-  const carried = room.inventory.filter(name => !worn.includes(name));
+  const room = state.room, gear = room.gear || [];
+  const worn = gear.filter(item => item.worn).map(item => item.label);
+  const carried = gear.filter(item => !item.worn).map(item => item.label);
   const repainting = avatar.status === "queued" || avatar.status === "generating";
   el("you").classList.toggle("repainting", repainting);
   text("you-label", "Life " + room.life + (repainting ? " · repainting" : ""));
@@ -264,7 +265,7 @@ function controls() {
   text("act-label", working ? "Thinking…" : ended ? "Ended" : "Act");
   el("act-key").hidden = working || ended;
   el("command").disabled = ended || choosing;
-  for (const btn of document.querySelectorAll("[data-command]")) btn.disabled = busy;
+  for (const btn of document.querySelectorAll("[data-command], [data-gear-select]")) btn.disabled = busy;
   if (ended) text("activity", "This session has ended. Your journal is still available.");
   else if (!connected) text("activity", state ? "Connection lost. Reconnecting…" : "Connecting to the game…");
   else {
@@ -275,26 +276,50 @@ function controls() {
 }
 
 function renderBag() {
-  const items = state?.room.inventory || [];
+  const roots = state?.room.gear || [];
   const list = node("div", "", "carried");
-  const worn = new Set(state?.room.worn || []);
-  list.append(...items.map(name => {
-    const contents = state.room.containers?.[name];
-    const item = commandButton(name, "examine " + name);
-    if (worn.has(name)) item.append(" ", node("em", "worn"));
-    if (!contents) return item;
-    const bag = node("div", "", "carried-container");
-    bag.append(item);
-    if (contents.length) {
-      const stored = node("div", "", "stored-items");
-      stored.append(...contents.map(gear => commandButton("Take out " + gear, "take " + gear + " from " + name)));
-      bag.append(stored);
-    } else {
-      item.append(" ", node("em", "empty"));
+  function entry(item, root, parent, attached) {
+    const row = node("div", "", "gear-entry");
+    const examine = commandButton(item.label, "examine " + item.label);
+    row.append(examine);
+    if (item.worn) row.append(node("em", "worn"));
+    if (item.contents?.length === 0) row.append(node("em", "empty"));
+    if (parent) {
+      const action = attached ? "Detach" : "Take out";
+      const command = (attached ? "detach " : "take ") + item.label + " from " + parent.label;
+      const remove = commandButton(action, command);
+      remove.setAttribute("aria-label", action + " " + item.label + " from " + parent.label);
+      row.append(remove);
     }
-    return bag;
-  }));
-  el("drawer-body").replaceChildren(items.length ? list : node("p", "You’re carrying nothing."));
+    function children(gear, outside) {
+      if (!gear) return;
+      const candidates = roots.filter(other => other.id !== root.id);
+      if (candidates.length) {
+        const select = document.createElement("select");
+        const label = outside ? "Attach to" : "Store in";
+        select.dataset.gearSelect = "";
+        select.setAttribute("aria-label", label + " " + item.label);
+        select.add(new Option(outside ? "Attach outside…" : "Store inside…", ""));
+        for (const other of candidates) select.add(new Option(other.label, other.label));
+        select.onchange = () => {
+          if (select.value) submit((outside ? "attach " : "put ") + select.value + (outside ? " to " : " in ") + item.label);
+          select.selectedIndex = 0;
+        };
+        row.append(select);
+      }
+      if (gear.length) {
+        const group = node("div", "", "stored-items");
+        group.append(node("em", outside ? "Attached" : "Inside"),
+          ...gear.map(child => entry(child, root, item, outside)));
+        row.append(group);
+      }
+    }
+    children(item.contents, false);
+    children(item.attachments, true);
+    return row;
+  }
+  list.append(...roots.map(item => entry(item, item, null, false)));
+  el("drawer-body").replaceChildren(roots.length ? list : node("p", "You’re carrying nothing."));
 }
 async function loadJournal(earlier = false) {
   const ticket = ++journalRequest;
@@ -426,7 +451,8 @@ async function previewNomination() {
   }
 }
 function renderState(next) {
-  const changed = !state || state.turn !== next.turn;
+  const changed = !state || state.turn !== next.turn || (drawer === "bag" &&
+    JSON.stringify(state.room.gear) !== JSON.stringify(next.room.gear));
   const choiceChanged = !state || Boolean(state.choosing) !== Boolean(next.choosing);
   state = next;
   connected = true;

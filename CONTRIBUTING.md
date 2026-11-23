@@ -51,6 +51,7 @@ pip install -r requirements-dev.txt
 | --- | --- |
 | Author a room, item, or encounter | `game_world/castle.py` holds the castle template. `game_world/models.py` defines rooms, items, discoveries, and challenges. `trials.py` defines the authored encounters. |
 | Interpret or resolve an action | `game_world/names.py` matches object references. `command_parser.py` turns input into an intent. `simulation_engine.py` applies game rules, and `environment_actions.py` adjudicates improvised actions. |
+| Extend inventory or crafting | `game_world/gear.py` handles transfers, numbered references, and inventory views. The design notes cover item capabilities, save compatibility, and regression tests. [Crafted storage and attachments](development/inventory.md) |
 | Change what happens during a turn | `GameSession` in `game_session/` coordinates the simulation, narration, and progression for both interfaces. `game_session/journal.py` defines the events and journal entries those interfaces share. |
 | Extend a story or publish a replay | `saga/` manages progression. `plans.py` builds rooms from plans, `routes.py` checks puzzle reachability, `prompt.py` contains the planner instructions, and `catalog.py` handles nominations and editions. |
 | Change an illustration or browser interaction | `room_companion/scenes.py` captures the scene and builds the image request. `renderer.py` handles the cache and queue, `images.py` calls the image service, and `server.py` serves the companion. `browser_game.py` serves interactive play. Both views use `room_companion/static/`. |

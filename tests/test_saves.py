@@ -73,7 +73,7 @@ def test_older_saves_gain_state_added_since(tmp_path):
     # Rewrite the snapshot as an older build would have pickled it, before these attributes existed.
     data = pickle.loads((slot.path / "state.bin").read_bytes()[32:])
     session = data["session"]
-    del session.game.worn, session.game.character, session.discovered_actions, session.rooms["Great Staircase"].trial
+    del session.game.character, session.discovered_actions, session.rooms["Great Staircase"].trial
     object.__delattr__(session.portrait, "look")
     object.__delattr__(session.cutscene.outfit, "look")
     snapshot = pickle.dumps(data)
@@ -159,14 +159,19 @@ def test_saved_cutscene_survives_later_turns_and_does_not_repeat(tmp_path):
     assert restored.cutscene_turn == 2 and restored.cutscene == session.cutscene
 
 
-def test_legacy_tapestry_bag_recovers_storage_and_keeps_it_on_resume(tmp_path):
+@pytest.mark.parametrize("description", [
+    "The tapestries are knotted into a large fabric bag.",
+    "A faded tapestry folded into a crude backpack and bound with an iron chain.",
+])
+def test_legacy_tapestry_bag_recovers_storage_and_keeps_it_on_resume(tmp_path, description):
     from game_world import Item
 
     session = GameSession()
-    tapestry = Item("tapestries", "The tapestries are knotted into a large fabric bag.", aliases=("tapestry",))
+    tapestry = Item("tapestries", description, aliases=("tapestry",))
     salt = Item("salt", "A pinch of salt.")
     session.game.inventory.extend([tapestry, salt])
-    session.game.worn["tapestries"] = "The bag hangs from your shoulders."
+    # The legacy snapshot stored wearing by name on GameState.
+    vars(session.game)["worn"] = {"tapestries": "The bag hangs from your shoulders."}
     slot = SaveSlot.new(tmp_path)
     slot.save(session, [])
     restored, _ = slot.load()
@@ -178,7 +183,7 @@ def test_legacy_tapestry_bag_recovers_storage_and_keeps_it_on_resume(tmp_path):
     assert "Inside: salt." in restored.turn("look in bag")[-1].text
     slot.save(restored, [])
     restored, _ = slot.load()
-    restored.turn("take the salt from the bag")
+    restored.turn("take the salt from the backpack")
     assert restored.public_state()["inventory"] == ["tapestry bag", "salt"]
     assert restored.public_state()["containers"] == {"tapestry bag": []}
 

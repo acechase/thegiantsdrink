@@ -44,11 +44,13 @@ def _quiet_typeahead():
         termios.tcsetattr(fd, termios.TCSANOW, previous)
 
 
-def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, export=None, archive=None,
+def main(*, visuals=False, browser=False, port=0, resume=False, load=None, saves=False, export=None, archive=None,
          replay=None, story_catalog=None, character=None, character_description=None):
     """Start, resume, list or export games. Playing uses the configured OpenAI credentials."""
     here = Path(__file__).parent
     root = here / "saves"
+    if port and (not browser or not 1 <= port <= 65535):
+        raise SystemExit("Use --browser with --port and a port number between 1 and 65535.")
     try:
         if saves:
             slots = SaveSlot.all(root)
@@ -93,7 +95,7 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
         raise SystemExit(str(exc)) from None
 
     if browser:
-        play_in_browser(session, journal=journal, store=slot, choose_character=not resuming and not has_character)
+        play_in_browser(session, journal=journal, store=slot, choose_character=not resuming and not has_character, port=port)
         return
     with open_companion(session.meter) if visuals else nullcontext(None) as viewer:
         _play(viewer, session, journal, slot)
@@ -290,6 +292,7 @@ if __name__ == "__main__":
     cli = argparse.ArgumentParser(description="Play The Giant's Drink.",
                                   epilog="Use main.py movie --help for movie export and voice design.")
     cli.add_argument("--browser", action="store_true", help="Play in a local browser with illustrations and cutscenes.")
+    cli.add_argument("--port", type=int, default=0, help="Reuse this local port for browser play (default: automatic).")
     cli.add_argument("--visuals", action="store_true", help="Open an illustrated companion for terminal play.")
     cli.add_argument("--replay", metavar="EDITION", help="Reuse a published story. Use ID@REVISION to pick a revision.")
     cli.add_argument("--story-catalog", metavar="PATH", help="Use an alternate published SQLite story catalog.")

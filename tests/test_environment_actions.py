@@ -6,6 +6,18 @@ from tests.support.openai import OPENAI_URL, adjudication, sent_scene
 
 
 class TestEnvironment:
+    def test_improvised_tapestry_backpack_is_a_container_immediately(self, openai_api, game, wmap):
+        from game_world import Item
+
+        tapestry = Item("tapestry", "Giants feast across the weave.")
+        game.inventory.append(tapestry)
+        openai_api.post(OPENAI_URL, json=adjudication(
+            effect="alter", anchor="tapestry", room_after=wmap["Starting Room"].fixed_text(),
+            description="A chain-strapped pack.", reply="You bind the cloth into a pack.", container="bag"))
+        game.investigate("tapestry", wmap, "lash the wool around a frame to carry my gear")
+        assert game.inventory == [tapestry] and tapestry.name == "tapestry bag" and tapestry.contents == []
+        assert tapestry.description == "A chain-strapped pack."
+
     def test_piece_of_described_scenery_can_be_taken(self, openai_api, game, wmap):
         game.move("north", wmap)
         corridor = wmap["Corridor"]

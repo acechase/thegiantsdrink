@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from game_world import OPPOSITE, key
+from game_world.gear import walk_items
 from openai_client import complete
 
 from .catalog import Catalog, StoryError, plan_id
@@ -149,7 +150,7 @@ class Saga:
             "earlier_arcs": [arc.title for arc in self.arcs],
             "recent_commands": game.history[-30:],
             "remembered_lessons": game.lessons[-8:],
-            "carried": [{"name": item.name, "description": item.description} for item in game.inventory],
+            "carried": [{"name": item.name, "description": item.description} for item in walk_items(game.inventory)],
             "existing_room_names": sorted(world),
         }
         feedback = ""

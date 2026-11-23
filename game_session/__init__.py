@@ -5,6 +5,8 @@ from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
 from content_generator import ContentGenerator
 from game_world import find_among, fresh_world, noun
+from game_world.gear import GearError, choose_item, describe_node, inventory_tree, item_labels, transfer, walk_items
+from game_world.names import matching_objects
 from room_companion.scenes import Avatar, Cutscene, Portrait, Scene
 from saga import CASTLE_HORIZON, Saga
 from saga.catalog import StoryError, nomination
@@ -20,8 +22,10 @@ HELP_TEXT = """Available commands:
   GO <direction> - Move through a listed exit
   TAKE <item>   - Pick up an item
   DROP <item>   - Set something down here
-  MAKE A BAG FROM THE TAPESTRY - Turn a carried tapestry into a bag
-  PUT <item> IN <bag> / TAKE <item> FROM <bag> - Store or retrieve a carried item
+  FASHION A POUCH FROM A CLOAK - Shape carried material into gear, or describe your own design
+  PUT <item> IN <container> / TAKE <item> FROM <container> - Store or retrieve an item
+  ATTACH <item> TO <gear> / DETACH <item> FROM <gear> - Fasten or unfasten an item
+  Use the numbered name shown in inventory when two items share a name.
   SEARCH <object> - Investigate a detail, or describe your own experiment
   USE <item>    - Use an item from your inventory
   USE <item> ON <object> - Try a tool on something nearby
@@ -93,6 +97,10 @@ class GameSession:
     def public_state(self):
         """Expose the visible scene and the player's public state."""
         room = self.room
+        nearby = [*room.items, *room.scenery]
+        self.game.number_items([*self.game.inventory, *nearby])
+        labels = item_labels([*self.game.inventory, *nearby])
+        gear = inventory_tree(self.game.inventory, labels)
         exits = list(self.scene.exits)
         gate = self.saga.gate
         if gate and not self.saga.review_complete and gate[0] == room.name and gate[1] not in exits:
@@ -100,11 +108,13 @@ class GameSession:
         return {
             "name": room.name, "description": self.description,
             "chapter": self.saga.arcs[room.arc - 1].title if room.arc else "The Castle",
-            "items": self.scene.items, "scenery": self.scene.scenery, "exits": exits,
-            "inventory": [item.name for item in self.game.inventory], "worn": list(self.game.worn),
+            "items": tuple(labels[item] for item in room.items), "scenery": tuple(labels[item] for item in room.scenery),
+            "exits": exits,
+            "inventory": [item.name for item in self.game.inventory], "worn": [item.name for item, _ in self.game.wearing()],
+            "gear": gear,
             "character": self.game.character.public(),
-            "containers": {item.name: [stored.name for stored in item.contents]
-                           for item in self.game.inventory if item.contents is not None},
+            "containers": {node["label"]: [stored["label"] for stored in node["contents"]]
+                           for node in gear if node["contents"] is not None},
             "trail": [{"way": way, "room": name} for way, name in self.game.trail[-4:]], "ended": self.ended,
             "life": self.game.deaths + 1, "lessons": list(self.game.lessons),
             "story_edition": self.saga.edition,
@@ -151,6 +161,7 @@ class GameSession:
         self.game.discovery = None
         self.game.history.append(command)
         previous = self.room
+        self.game.number_items([*self.game.inventory, *previous.items, *previous.scenery])
         action, target = parse_command(command, previous, self.game.inventory, report=report)
         if action:
             report(f"[Procedural] Resolving {action.replace('_', ' ')}.")
@@ -163,9 +174,11 @@ class GameSession:
 
         previous_deaths = self.game.deaths
         before, outfit = Scene.from_room(previous), Avatar.of(self.game)
-        result = self._resolve(command, action, target, report)
+        try:
+            result = self._resolve(command, action, target, report)
+        except GearError as exc:
+            result = str(exc)
         discovery, self.game.discovery = self.game.discovery, None
-        self.game.prune_worn()
         profile = self.behavior.get_profile()
         summary = self.behavior.get_profile_summary()
         self.adaptation.adjust_difficulty(profile, summary)
@@ -227,6 +240,15 @@ class GameSession:
 
     def _resolve(self, command, action, target, report):
         game, rooms, room = self.game, self.rooms, self.room
+        nearby = [*room.items, *room.scenery]
+        if action in ("take", "drop", "use", "use_on", "craft", "interact", "search"):
+            roots = [*game.inventory, *nearby]
+            refs = target if action == "use_on" else (target.tool if action == "craft" else target,)
+            for ref in refs:
+                if not matching_objects(ref, roots):
+                    child = choose_item(ref, walk_items(roots))
+                    if child:
+                        return f"Remove the {child.name} from its holder first."
         if action == "remember":
             return "\n".join(game.lessons) or "This is your first life. You have no lessons to recall yet."
         if action == "self":
@@ -254,9 +276,11 @@ class GameSession:
                 if game.current_room != room.name and game.deaths == lives_lost:
                     self.behavior.update_profile("move")
         elif action == "craft_bag":
-            result = game.make_tapestry_bag()
-        elif action in ("pack", "unpack"):
-            result = game.transfer_bag_item(target.tool, target.subject, unpack=action == "unpack")
+            result = game.make_tapestry_bag(target)
+        elif action == "craft":
+            result = game.craft_gear(target.tool, target.subject, room, command, report)
+        elif action in ("pack", "unpack", "retrieve", "attach", "unfasten"):
+            result = transfer(game.inventory, nearby, action, target.tool, target.subject)
         elif action == "take" and target:
             held = len(game.inventory)
             result = game.take_item(target, rooms, command=command, report=report)
@@ -268,7 +292,7 @@ class GameSession:
             difficulty = self.adaptation.get_difficulty()
             held = find_among(target, game.inventory, room.items, room.scenery)
             if held in game.inventory:
-                result = game.use_item(held.name, difficulty, world_map=rooms, command=command, report=report)
+                result = game.use_item(target, difficulty, world_map=rooms, command=command, report=report)
             else:
                 result = game.investigate(target, rooms, command, report=report)
             self.behavior.update_profile("use")
@@ -286,14 +310,9 @@ class GameSession:
             result = game.attack(target, difficulty, world_map=rooms)
             self.behavior.update_profile("attack")
         elif action == "check" and target == "inventory":
+            gear = inventory_tree(game.inventory, item_labels([*game.inventory, *nearby]))
             result = (
-                "Inventory: " + ", ".join(
-                    item.name + (" (worn)" if item.name in game.worn else "")
-                    + (f" [{', '.join(stored.name for stored in item.contents) or 'empty'}]"
-                       if item.contents is not None else "")
-                    for item in game.inventory
-                )
-                if game.inventory
+                "Inventory: " + ", ".join(map(describe_node, gear)) if gear
                 else "Your inventory is empty."
             )
             self.behavior.update_profile("check")

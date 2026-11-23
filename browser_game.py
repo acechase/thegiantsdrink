@@ -271,12 +271,12 @@ class PlayHandler(ViewerHandler):
 
 
 @contextmanager
-def play_server(session, cache_dir, model, *, journal=None, store=None, choose_character=False):
-    """Bind an ephemeral local port and own the game and illustration workers."""
+def play_server(session, cache_dir, model, *, journal=None, store=None, choose_character=False, port=0):
+    """Bind a local port and own the game and illustration workers."""
     page = (STATIC_DIR / "play.html").read_bytes()
     assets = {"/play.js": ("text/javascript; charset=utf-8", (STATIC_DIR / "play.js").read_bytes()),
               "/play.css": ("text/css; charset=utf-8", (STATIC_DIR / "play.css").read_bytes())}
-    with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
+    with ThreadingHTTPServer(("127.0.0.1", port), PlayHandler) as server:
         server.viewer = RoomCompanion(cache_dir, model, meter=session.meter, cutscenes=True)
         server.avatar = RoomCompanion(cache_dir, model, meter=session.meter)
         server.game = BrowserGame(session, server.viewer, avatar=server.avatar, journal=journal, store=store,
@@ -288,12 +288,12 @@ def play_server(session, cache_dir, model, *, journal=None, store=None, choose_c
             server.game.close()
 
 
-def play_in_browser(session, *, journal=None, store=None, choose_character=False):
+def play_in_browser(session, *, journal=None, store=None, choose_character=False, port=0):
     """Open the local game and keep it available across tab closes and refreshes."""
     model = os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
     try:
         with play_server(session, ART_CACHE, model, journal=journal, store=store,
-                         choose_character=choose_character) as server:
+                         choose_character=choose_character, port=port) as server:
             url = f"http://127.0.0.1:{server.server_port}/"
             if store:
                 print(f"Autosaving as {store.ident}. Resume later with --continue or --load {store.ident}.")

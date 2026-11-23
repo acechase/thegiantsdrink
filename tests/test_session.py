@@ -195,7 +195,11 @@ def test_improvised_cutscene_requires_an_effect_and_ignores_paraphrased_repeats(
     assert castle.cutscene is scene and len(castle.discovered_actions) == 1
 
 
-def test_crafting_a_bag_and_packing_gear_is_procedural(castle, monkeypatch):
+@pytest.mark.parametrize("craft", [
+    "use the tapestry to make a bag for holding all our small items that we're carrying",
+    "make the tapestry into a backpack",
+])
+def test_crafting_a_bag_and_packing_gear_is_procedural(castle, monkeypatch, craft):
     from game_world import Item
 
     def no_model(*args, **kwargs):
@@ -205,12 +209,29 @@ def test_crafting_a_bag_and_packing_gear_is_procedural(castle, monkeypatch):
     monkeypatch.setattr("environment_actions.complete", no_model)
     castle.game.inventory.append(Item("tapestry", "A length of sturdy cloth."))
     castle.turn("take candle")
-    castle.turn("use the tapestry to make a bag for holding all our small items that we're carrying")
+    castle.turn(craft)
     assert castle.cutscene is not None and castle.public_state()["inventory"] == ["tapestry bag", "candle"]
-    assert "Keep containers separate." in castle.turn("put bag in bag")[-1].text
+    assert "cannot hold itself" in castle.turn("put bag in bag")[-1].text
     castle.turn("put candle in bag")
     castle.turn("drop bag")
     castle.turn("take tapestry bag")
     assert castle.public_state()["containers"] == {"tapestry bag": ["candle"]}
     castle.turn("take candle out of bag")
     assert castle.public_state()["inventory"] == ["tapestry bag", "candle"]
+
+
+def test_worn_helmet_can_be_packed_and_retrieved_by_its_alias(castle, monkeypatch):
+    from game_world import Item
+
+    scripted(monkeypatch, [])
+    helm = Item("iron helm", "An iron helm.", usable=True)
+    castle.game.inventory.extend([Item("tapestry", "A length of cloth."), helm])
+    castle.turn("use helm")
+    castle.turn("make the tapestry into a backpack")
+    castle.turn("put the helmet Into the backpack")
+    state = castle.public_state()
+    assert state["containers"] == {"tapestry bag": ["iron helm"]}
+    assert state["inventory"] == ["tapestry bag"] and state["worn"] == []
+    assert "Inside: iron helm." in castle.turn("look inside my backpack")[-1].text
+    castle.turn("take the helmet out of the backpack")
+    assert castle.game.inventory[-1] is helm and castle.public_state()["containers"] == {"tapestry bag": []}

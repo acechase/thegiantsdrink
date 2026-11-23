@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from characters import STOCK
+from game_world.gear import visible_attachments
 
 STYLE = (
     "Landscape environmental painting for a surreal fairy-tale castle exploration game. "
@@ -53,8 +54,11 @@ def _image_request(model, prompt, size="1536x1024"):
 
 def _outfit(game):
     """Return what the player wears (name, how, look) and carries (name, look) right now."""
-    worn = tuple((item.name, how, item.description[:240]) for item, how in game.wearing())
-    carried = tuple((item.name, item.description[:240]) for item in game.inventory if item.name not in game.worn)
+    def appearance(item):
+        return " ".join([item.description[:240], *visible_attachments(item)])
+
+    worn = tuple((item.name, how, appearance(item)) for item, how in game.wearing())
+    carried = tuple((item.name, appearance(item)) for item in game.inventory if not item.worn)
     return worn, carried
 
 
