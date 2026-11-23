@@ -1,0 +1,169 @@
+{
+  "title": "The Moon in the Dry Basin",
+  "scenes": [
+    {
+      "title": "The Hollow Stone",
+      "turns": [
+        1,
+        3,
+        4
+      ],
+      "art": [
+        1,
+        3,
+        4
+      ],
+      "text": "I tapped the wall with my sword, and one of the stones sounded weird. Then it moved. There were stairs back there.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "push",
+      "seconds": 9
+    },
+    {
+      "title": "The Giants on My Cloak",
+      "turns": [
+        7,
+        10,
+        11,
+        31
+      ],
+      "art": [
+        11,
+        31
+      ],
+      "text": "I found this tapestry with giants all over it, so I wore it like a cape. Then I walked into a room with a real one.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "pull",
+      "seconds": 8
+    },
+    {
+      "title": "The Offer",
+      "turns": [
+        31
+      ],
+      "art": [
+        31
+      ],
+      "speaker": "giant",
+      "text": "One will take you beyond the castle. Choose.",
+      "direction": "Low, almost courteous authority. Leave a beat before “Choose.” Say that last word quietly and with finality.",
+      "motion": "push",
+      "seconds": 5.5
+    },
+    {
+      "title": "The Silver Eye",
+      "turns": [
+        31,
+        32,
+        33,
+        34
+      ],
+      "art": [
+        32,
+        33,
+        34
+      ],
+      "text": "He was watching my hands, but in the tray his reflection was watching the cups. So I knocked them both over. His eye opened like a door. I went through.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "push",
+      "seconds": 12
+    },
+    {
+      "title": "The Tide at Moth Wharf",
+      "turns": [
+        35,
+        40,
+        41
+      ],
+      "art": [
+        35,
+        40,
+        41
+      ],
+      "text": "I could see waves in this stone basin, even though it was dry. I messed up the salt around the edge to see what would happen. Nothing.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "pull",
+      "seconds": 11
+    },
+    {
+      "title": "Three Rising Notes",
+      "turns": [
+        43,
+        44,
+        51,
+        52,
+        57,
+        69,
+        70
+      ],
+      "art": [
+        44,
+        51,
+        69,
+        70
+      ],
+      "text": "A tree was humming three notes. I heard the same notes in the rain and found a whistle there. I played them into the tree. It opened.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "push",
+      "seconds": 13
+    },
+    {
+      "title": "The Circle of Salt",
+      "turns": [
+        71,
+        72,
+        87,
+        115,
+        116,
+        154,
+        156
+      ],
+      "art": [
+        71,
+        87,
+        115,
+        116
+      ],
+      "text": "Under the tree I found a piece of moon with waves in it. Same as the basin. I put it inside a ring of salt. The waves barely moved.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "push",
+      "seconds": 12
+    },
+    {
+      "title": "The Way Beneath the Quay",
+      "turns": [
+        170,
+        171,
+        172,
+        173
+      ],
+      "art": [
+        170,
+        172,
+        173
+      ],
+      "text": "I picked the moon shard back up. This time its reflection fit right into the curve in the basin. The tide pulled back, and there was a path under the dock.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "push",
+      "seconds": 12
+    },
+    {
+      "title": "The Reed Chapel",
+      "turns": [
+        179,
+        184,
+        185,
+        186,
+        187
+      ],
+      "art": [
+        184,
+        186,
+        187
+      ],
+      "text": "My shadow stopped right at the edge of the drop. I backed up. Then I heard this tapping from the reeds. There was a drum in there.",
+      "direction": "Tell a friend what happened. Use your everyday speaking voice.",
+      "motion": "pull",
+      "seconds": 13
+    }
+  ]
+}

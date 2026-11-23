@@ -117,6 +117,10 @@ The movie exporter adapts a saved journal into a short story. It drafts a screen
 favors paintings of the player's actual discoveries, and uses Gemini for the narrator and the giant. Speech
 sets the pace of each scene. The MP4 includes animated camera moves, captions, and chapter markers.
 
+Watch [The Moon in the Dry Basin](examples/playthrough-movies/the-moon-in-the-dry-basin.mp4) for a short example
+with Leda's conversational narration. The [screenplay](examples/playthrough-movies/the-moon-in-the-dry-basin.screenplay.json)
+shows the final dialogue and voice direction. Its turn numbers refer to the original playthrough.
+
 Install [FFmpeg](https://ffmpeg.org/download.html) with H.264 (`libx264`) and AAC support. In the game's virtual
 environment, install the optional rendering dependency:
 
