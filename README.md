@@ -151,10 +151,19 @@ to use the best cached painting from the source turns, or use an empty list for 
 `narrator` or `giant`, write the spoken `text`, and put any delivery notes in `direction`. For a wordless scene, use
 `"speaker": null` and `"text": ""`. Set `motion` to `push`, `pull`, or `hold`. The `seconds` field sets the minimum hold.
 
-The girl preset uses Leda, Gemini’s youthful female voice. An explicit identity in an edited character
-description can change the casting. For example, “You are a boy of ten” selects Algieba. The unspecified
-child preset and older saves without character information use Algieba. The giant defaults to Algenib.
-Use `--narrator-voice` to choose a different voice or a custom voice ID for a particular export.
+The film is narrated by the saved character. The screenwriter receives the character description, so a child tells
+the story in a kid's own words, and an adult's wording fits their age and temperament.
+
+Gemini declines to design children's voices, so child narrators use prebuilt voices with an everyday,
+telling-a-friend delivery. The girl preset uses Leda, Gemini's youthful female voice. The unspecified child preset
+and older saves without character information use Algieba.
+
+When you edit the character description, the exporter asks the OpenAI model whether the character is a child or an
+adult. For an adult, it writes a voice description and designs a matching Gemini voice on the first voiced export.
+The result goes in `saves/<game>/cast.json`, with Gemini's sample in `narrator-voice.wav`, and later exports
+reuse the voice. To redesign it, edit `voice_prompt` in `cast.json` and export again. If Gemini declines a
+description, the exporter uses Despina or Algieba. The giant defaults to Algenib. Use `--narrator-voice` to choose
+a different voice or a custom voice ID for a particular export.
 
 You can create an original giant voice using Gemini Voice Design:
 

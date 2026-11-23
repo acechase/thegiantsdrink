@@ -34,10 +34,11 @@ NARRATOR_VOICES = {"girl": "Leda", "female": "Leda", "woman": "Despina",
 class GeminiError(MovieError):
     """A failed Gemini response with its status for model selection."""
 
-    def __init__(self, status, message):
-        """Keep the HTTP status without exposing authentication data."""
+    def __init__(self, status, message, detail=""):
+        """Keep the HTTP status and Gemini's reason without exposing authentication data."""
         super().__init__(message)
         self.status = status
+        self.detail = detail
 
 
 def _post(resource, payload):
@@ -55,7 +56,12 @@ def _post(resource, payload):
             raise GeminiError(status, "Gemini reached the model's rate or daily limit. Re-run after the quota resets.")
         if status in (401, 403):
             raise GeminiError(status, f"Gemini denied access (HTTP {status}). Check your key and project permissions.")
-        raise GeminiError(status, f"Gemini {resource} returned HTTP {status}. Check the model and configured voice IDs.")
+        try:
+            detail = str(response.json()["error"]["message"])[:200]
+        except (ValueError, KeyError, TypeError):
+            detail = ""
+        advice = detail or "Check the model and configured voice IDs."
+        raise GeminiError(status, f"Gemini {resource} returned HTTP {status}. {advice}", detail)
     try:
         body = response.json()
     except ValueError:
@@ -114,6 +120,7 @@ class Cast:
     narrator: str = "Algieba"
     giant: str = "Algenib"
     model: str = "auto"
+    narrator_direction: str = DIRECTIONS["narrator"]
 
 
 def narrator_for(character):
@@ -150,7 +157,8 @@ class VoiceRenderer:
     def take(self, scene):
         """Return the WAV path for the selected speaker and exact passage."""
         voice = getattr(self.cast, scene.speaker)
-        direction = scene.direction or DIRECTIONS[scene.speaker]
+        default = self.cast.narrator_direction if scene.speaker == "narrator" else DIRECTIONS[scene.speaker]
+        direction = scene.direction or default
         candidates = []
         for model in self.models:
             payload = _speech(model, voice, scene.text, direction)

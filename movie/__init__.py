@@ -8,7 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from movie.screenplay import MovieError, draft, journal, read_screenplay
-from movie.voices import FLASH, FLASH_LITE, Cast, VoiceRenderer, design_voice, narrator_for
+from movie.casting import cast_narrator
+from movie.voices import FLASH, FLASH_LITE, Cast, VoiceRenderer, design_voice
 from saves import SaveError, SaveSlot, write_atomic
 
 
@@ -44,7 +45,7 @@ def _export(args, root, art_dir):
             raise MovieError(f"The screenplay at {script} is invalid JSON.") from None
         print(f"Using the screenplay at {script}")
     else:
-        data = draft(turns, art_dir)
+        data = draft(turns, art_dir, record.get("character"))
         script.parent.mkdir(parents=True, exist_ok=True)
         write_atomic(script, (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
         print(f"Wrote the screenplay to {script}")
@@ -60,13 +61,13 @@ def _export(args, root, art_dir):
     voices = None
     if not args.silent:
         defaults = Cast()
-        cast = Cast(
-            args.narrator_voice or os.getenv("MOVIE_NARRATOR_VOICE") or narrator_for(record.get("character")),
-            args.giant_voice or os.getenv("MOVIE_GIANT_VOICE") or defaults.giant,
-            args.speech_model or os.getenv("MOVIE_GEMINI_MODEL") or defaults.model,
-        )
-        if cast.model not in ("auto", FLASH, FLASH_LITE):
+        model = args.speech_model or os.getenv("MOVIE_GEMINI_MODEL") or defaults.model
+        if model not in ("auto", FLASH, FLASH_LITE):
             raise MovieError("Set the Gemini model to auto, gemini-3.8-flash-tts, or gemini-3.8-flash-lite-tts.")
+        narrator = cast_narrator(record.get("character"), slot.path,
+                                 args.narrator_voice or os.getenv("MOVIE_NARRATOR_VOICE"))
+        cast = Cast(narrator.voice, args.giant_voice or os.getenv("MOVIE_GIANT_VOICE") or defaults.giant,
+                    model, narrator.direction)
         voices = VoiceRenderer(slot.path / ".movie-audio", cast)
     render_movie(screenplay, turns, art_dir, output, voices=voices, music=args.music)
     print(f"Wrote the movie to {output}")
@@ -95,7 +96,8 @@ def run(argv, here):
     export.add_argument("--silent", action="store_true", help="Render with captions and without generating speech.")
     export.add_argument("--output", type=Path, help="Path to the rendered MP4.")
     export.add_argument("--music", type=Path, help="Optional music bed to play under the speech.")
-    export.add_argument("--narrator-voice", help="Override the saved character's narrator with a Gemini voice name or ID.")
+    export.add_argument("--narrator-voice",
+                        help="Override the narrator cast from the saved character with a Gemini voice name or ID.")
     export.add_argument("--giant-voice", help="Gemini voice name or designed voice ID for the giant.")
     export.add_argument("--speech-model", choices=("auto", FLASH, FLASH_LITE), help="Gemini speech model. Defaults to auto.")
     design = sub.add_parser("design-voice", help="Create a Gemini voice from a text description.")

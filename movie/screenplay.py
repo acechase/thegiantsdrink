@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import Optional
 
+from characters import MAX_DESCRIPTION, STOCK
 from openai_client import complete
 from playthrough import _art
 
@@ -22,6 +23,13 @@ introduced. Compress room-to-room travel, inventory checks, retries, and side ex
 death only if it raises the stakes or changes the next decision. An unfinished run can end on a payoff already earned
 or an honest cliffhanger. Never invent a death, a success, or an ending. Write intimate first-person narration with
 concrete details and room for silence. Use the giant's own recorded dialogue sparingly, on its own scene.
+
+The narrator is the player character described before the journal. Write in words that character would actually say.
+A child sounds like a real kid telling a friend what happened: short sentences, everyday words, plain comparisons, the
+details a kid notices, and no grown-up or poetic turns of phrase. Begin every direction for a child narrator with "Tell
+a friend what happened. Use your everyday speaking voice." Add at most one short note after it, and only when a
+moment truly needs a different delivery, such as a whisper. Fit an adult's wording to their age, background and
+temperament.
 
 Return a single JSON object with these keys:
 {"title":"Film title","scenes":[{"title":"Chapter label","turns":[1,3],"art":[3],"speaker":"narrator",
@@ -183,9 +191,16 @@ def _journal_prompt(turns, art_dir):
     return "\n".join(text for _, text in entries)
 
 
-def draft(turns, art_dir, report=print):
-    """Ask the existing text model for a film adaptation of the compact journal."""
-    prompt = _journal_prompt(turns, art_dir)
+def _character_prompt(character):
+    description = character.get("description") if isinstance(character, dict) else None
+    if not isinstance(description, str) or not description.strip():
+        description = STOCK.description  # Saves from before character choice played the stock child.
+    return f"Player character: {' '.join(description.split())[:MAX_DESCRIPTION]}"
+
+
+def draft(turns, art_dir, character=None, report=print):
+    """Ask the existing text model for a film adaptation narrated by the saved character."""
+    prompt = f"{_character_prompt(character)}\n\nJournal:\n{_journal_prompt(turns, art_dir)}"
     result = complete(PROMPT, prompt, max_tokens=5000, json_output=True, purpose="movie screenplay",
                       read_timeout=180, report=report)
     if not result:
