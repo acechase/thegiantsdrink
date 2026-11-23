@@ -1,16 +1,16 @@
 import json
 import threading
-from contextlib import contextmanager
 from http.client import HTTPConnection
 
 import pytest
 
 import room_companion
 import saga
-from browser_game import BrowserGame, play_server
+from browser_game import BrowserGame
 from characters import MAX_DESCRIPTION, STOCK, make, presets_public
 from game_session import GameSession
-from tests.test_game import EXPLORE_ORCHARD, expanded_arc_plan
+from tests.support.browser import http_request, running_server, submit
+from tests.support.stories import EXPLORE_ORCHARD, expanded_arc_plan
 
 
 @pytest.fixture
@@ -20,14 +20,6 @@ def game(tmp_path, monkeypatch):
     game = BrowserGame(GameSession(), viewer)
     yield game
     game.close()
-
-
-def submit(game, command, ident=None):
-    turn = game.snapshot()["turn"]
-    assert game.submit({"id": ident or str(turn), "command": command, "after": turn})[0] == 202
-    with game.condition:
-        assert game.condition.wait_for(lambda: len(game.journal) == turn + 1, timeout=3)
-    return game.snapshot()
 
 
 def test_concurrent_and_duplicate_commands_have_one_effect(game, monkeypatch):
@@ -129,29 +121,6 @@ def test_pending_gate_obstacle_and_chapter_survive_browser_turns(game, monkeypat
     assert submit(game, "go west")["room"]["name"] == "Echo Vault"
 
 
-@contextmanager
-def running_server(tmp_path, monkeypatch, session=None, *, illustrate=lambda payload: b"art", **options):
-    monkeypatch.setattr(room_companion, "generate_image", illustrate)
-    with play_server(session or GameSession(), tmp_path, "test-model", **options) as server:
-        worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
-        worker.start()
-        try:
-            yield server
-        finally:
-            server.shutdown()
-            worker.join(timeout=2)
-
-
-def http_request(port, method, path, payload=None, headers=None):
-    client = HTTPConnection("127.0.0.1", port, timeout=2)
-    try:
-        client.request(method, path, payload, headers or {})
-        response = client.getresponse()
-        return response.status, response.read()
-    finally:
-        client.close()
-
-
 def test_browser_character_chooser(tmp_path, monkeypatch):
     cards = []
 
@@ -249,8 +218,7 @@ def test_discovery_paintings_queue_without_blocking_turns_or_losing_earlier_scen
         return b"art"
 
     monkeypatch.setattr("content_generator.ContentGenerator.generate_description", lambda self, *a, **kw: kw["description"])
-    with running_server(tmp_path, monkeypatch) as server:
-        monkeypatch.setattr(room_companion, "generate_image", illustrate)
+    with running_server(tmp_path, monkeypatch, illustrate=illustrate) as server:
         game = server.game
         try:
             assert not submit(game, "take sword")["cutscene"].get("key")
@@ -390,8 +358,7 @@ def test_character_card_follows_the_outfit_but_not_the_room(tmp_path, monkeypatc
 
     monkeypatch.setattr("content_generator.ContentGenerator.generate_description",
                         lambda self, name, *a, **kw: kw["description"])
-    with running_server(tmp_path, monkeypatch) as server:
-        monkeypatch.setattr(room_companion, "generate_image", illustrate)
+    with running_server(tmp_path, monkeypatch, illustrate=illustrate) as server:
         game, port = server.game, server.server_port
 
         def card():
@@ -401,6 +368,7 @@ def test_character_card_follows_the_outfit_but_not_the_room(tmp_path, monkeypatc
             return game.snapshot()["avatar"]
 
         plain = card()
+        requests.clear()  # Count outfit changes after the first card finishes.
         assert plain["kind"] == "avatar" and plain["items"] == () and plain["image"]
         client = HTTPConnection("127.0.0.1", port, timeout=2)
         client.request("GET", plain["image"], headers={"Host": f"127.0.0.1:{port}"})

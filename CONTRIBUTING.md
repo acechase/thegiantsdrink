@@ -45,18 +45,35 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
+## Code layout
+
+| Change | Where to work |
+| --- | --- |
+| Author a room, item, or encounter | `game_world/castle.py` holds the castle template. `game_world/models.py` defines rooms, items, discoveries, and challenges. `trials.py` defines the authored encounters. |
+| Interpret or resolve an action | `game_world/names.py` matches object references. `command_parser.py` turns input into an intent. `simulation_engine.py` applies game rules, and `environment_actions.py` adjudicates improvised actions. |
+| Change what happens during a turn | `GameSession` in `game_session/` coordinates the simulation, narration, and progression for both interfaces. `game_session/journal.py` defines the events and journal entries those interfaces share. |
+| Extend a story or publish a replay | `saga/` manages progression. `plans.py` builds rooms from plans, `routes.py` checks puzzle reachability, `prompt.py` contains the planner instructions, and `catalog.py` handles nominations and editions. |
+| Change an illustration or browser interaction | `room_companion/scenes.py` captures the scene and builds the image request. `renderer.py` handles the cache and queue, `images.py` calls the image service, and `server.py` serves the companion. `browser_game.py` serves interactive play. Both views use `room_companion/static/`. |
+| Change saves or playthrough exports | `saves.py` signs and restores session snapshots and writes the JSON journal. `playthrough.py` turns a saved journal and its cached artwork into a standalone HTML page. |
+
+Each session starts with `game_world.fresh_world()`, which copies the castle and preserves shared references inside that copy. Modify the session's rooms during play. Use the same factory with a custom map for an isolated scenario or test.
+
+Old snapshots look up classes by their Python module and name. When moving a saved type, keep its original import path working and test loading its earlier field values. Catalog plan IDs depend on the serialized plan fields. Cached illustration IDs depend on the exact image request.
+
 ## Starting characters
 
 Add new starting characters to `characters.PRESETS`. Give each preset a unique key, a display name, and a second-person description that includes the character's base clothes and fits within `characters.MAX_DESCRIPTION`. Presets appear in order in the browser and terminal choosers.
 
 ## Running Tests
 
+Subsystem tests live under `tests/`. Shared pytest fixtures live in `tests/conftest.py`. Use `tests/support/` for sample story plans, scripted model replies, and drivers for the terminal and browser. The save tests include a game written by commit `49d85e5` so future package moves are checked against a real earlier snapshot.
+
 ```bash
 # Run all tests with verbose output
-pytest tests/test_game.py -v
+python -m pytest -v
 
 # Run with coverage
-pytest tests/test_game.py --cov=. --cov-report=term-missing
+python -m pytest --cov=. --cov-report=term-missing
 ```
 
 ## Linting
@@ -76,9 +93,8 @@ ruff format .
 
 ```bash
 # Generate HTML docs with pdoc
-pdoc --html --output-dir docs \
-  simulation_engine command_parser content_generator \
-  behavior_analyzer adaptation_ai game_world main
+python -m pdoc -o docs game_session game_world saga room_companion \
+  simulation_engine command_parser content_generator behavior_analyzer adaptation_ai main
 
 # Preview locally
 python -m http.server --directory docs 8080

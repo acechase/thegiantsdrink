@@ -16,7 +16,9 @@ jobs:
         with:
           python-version: '3.9'
       - run: pip install pdoc -r requirements.txt
-      - run: PYTHONPATH=. pdoc adaptation_ai behavior_analyzer command_parser content_generator game_world simulation_engine main --output-dir docs
+      - run: >-
+          python -m pdoc -o docs game_session game_world saga room_companion
+          simulation_engine command_parser content_generator behavior_analyzer adaptation_ai main
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

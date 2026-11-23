@@ -278,10 +278,11 @@ class GameState:
             return self.investigate(target_name, world_map, command, tool=tool, report=report)
 
         challenge, obstacle = self.active_challenge(room)
-        if obstacle is target and challenge.outcome(tool.name):
-            approach = next(approach for name, approach, _ in challenge.solutions if name == tool.name)
-            return self.overcome(room, challenge.outcome(tool.name), tool=tool.name,
-                                 action=f"Use the {tool.name} on the {obstacle.name}. Approach: {approach}.")
+        if obstacle is target:
+            solution = challenge.solution_for(tool.name)
+            if solution and solution.outcome:
+                return self.overcome(room, solution.outcome, tool=tool.name,
+                                     action=f"Use the {tool.name} on the {obstacle.name}. Approach: {solution.approach}.")
         passage = room.passage
         if passage and target.name == passage.landmark and tool.name == passage.tool:
             if room.passage_open:

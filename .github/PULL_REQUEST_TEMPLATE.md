@@ -10,7 +10,7 @@
 
 - [ ] Branch follows naming convention (`feature/`, `fix/`, `docs/`, etc.)
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
-- [ ] All tests pass (`pytest tests/test_game.py -v`)
+- [ ] All tests pass (`python -m pytest -v`)
 - [ ] Linter is clean (`ruff check .`)
 - [ ] New public functions have Google-style docstrings
 - [ ] CHANGELOG.md updated (if user-facing change)

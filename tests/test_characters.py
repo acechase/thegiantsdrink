@@ -13,11 +13,10 @@ from game_session import GameSession
 from game_world import Item
 from room_companion import Avatar
 from saves import SaveSlot
-from tests.test_game import openai_api  # noqa: F401 - fixture
 
 
 @pytest.fixture(autouse=True)
-def no_openai(openai_api):  # noqa: F811
+def no_openai(openai_api):
     yield
     assert not openai_api.calls
 
@@ -54,7 +53,9 @@ def test_character_changes_all_player_painting_requests():
         return [painting.request("model") for painting in (Avatar.of(session.game), session.portrait, session.cutscene)]
 
     custom = make("girl", "You have a long braid with a blue ribbon.")
-    for stock, edited in zip(paintings(STOCK), paintings(custom), strict=True):
+    stock_paintings, edited_paintings = paintings(STOCK), paintings(custom)
+    assert len(stock_paintings) == len(edited_paintings) == 3
+    for stock, edited in zip(stock_paintings, edited_paintings):
         assert STOCK.description in stock["prompt"] and custom.description in edited["prompt"]
         assert stock != edited
 

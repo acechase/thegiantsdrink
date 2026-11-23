@@ -1,9 +1,8 @@
-import contextlib
-import io
+import gzip
 import json
 import pickle
 import shutil
-from unittest.mock import patch
+from pathlib import Path
 
 import pytest
 
@@ -12,10 +11,11 @@ from browser_game import BrowserGame
 from characters import STOCK, make
 from content_generator import ContentGenerator
 from game_session import GameSession
+from game_session.journal import JournalTurn
 from playthrough import render
 from saves import SaveError, SaveSlot, _key, _sign
-from tests.test_browser_game import submit
-from tests.test_game import openai_api  # noqa: F401 - fixture
+from tests.support.browser import submit
+from tests.support.cli import run_cli
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +84,30 @@ def test_older_saves_gain_state_added_since(tmp_path):
     assert resumed.game.character == STOCK
     for painting in (resumed.portrait, resumed.cutscene):
         assert STOCK.description in painting.request("model")["prompt"]
+
+
+def test_resume_and_finish_a_puzzle_saved_before_the_package_split(tmp_path):
+    # Commit 49d85e5 wrote this snapshot after EXPLORE_ORCHARD and "look at yourself".
+    # Keep its original pickle bytes and sign them for this test installation.
+    fixture = Path(__file__).with_name("fixtures") / "session-49d85e5.pickle.gz"
+    snapshot = gzip.decompress(fixture.read_bytes())
+    slot = SaveSlot(tmp_path, "orchard")
+    slot.path.mkdir()
+    (slot.path / "state.bin").write_bytes(_sign(_key(tmp_path, create=True), snapshot) + snapshot)
+
+    session, journal = slot.load()
+    assert len(journal) == 16 and journal[-1]["command"] == "look at yourself"
+    assert session.room.name == session.portrait.place == "Still Pool"
+    assert session.cutscene.scene.name == "Weather Porch"
+    assert session.room.challenge.solution_for("silver bell").approach == "ring a matching note"
+    command = "use silver bell on glass heron"
+    turn = JournalTurn.start(len(journal) + 1, command, session.public_state())
+    turn.events = session.turn(command)
+    journal.append(turn.record(art=None))
+    assert session.room.challenge.resolved
+    slot.save(session, journal)
+    restored, saved_journal = slot.load()
+    assert restored.room.challenge.resolved and saved_journal == journal
 
 
 def test_continue_picks_the_latest_resumable_game(tmp_path):
@@ -159,27 +183,19 @@ def test_legacy_tapestry_bag_recovers_storage_and_keeps_it_on_resume(tmp_path):
     assert restored.public_state()["containers"] == {"tapestry bag": []}
 
 
-def test_terminal_games_autosave_resume_list_and_export(openai_api, tmp_path):  # noqa: F811
-    import main
-
-    def run(inputs, **options):
-        out = io.StringIO()
-        with patch("builtins.input", side_effect=[*inputs, EOFError()]), contextlib.redirect_stdout(out):
-            main.main(**options)
-        return out.getvalue()
-
-    first = run(["take candle", "take sword"])
+def test_terminal_games_autosave_resume_list_and_export(openai_api, tmp_path):
+    first = run_cli(["take candle", "take sword"])
     (slot,) = SaveSlot.all(tmp_path / "saves")
     assert f"Autosaving as {slot.ident}" in first and slot.record()["turns"] == 2
     assert "This game has used 0 AI tokens: 0 for text and 0 for 0 illustrations." in first
-    second = run(["inventory"], resume=True)
+    second = run_cli(["inventory"], resume=True)
     assert f"Resuming {slot.ident} after turn 2" in second and "Inventory: candle, rusty sword" in second
     assert [e["turn"] for e in slot.record()["journal"]] == [1, 2, 3]
-    assert "3 turns, life 1, Starting Room in The Castle" in run([], saves=True)
-    assert "Wrote the playthrough" in run([], export="")
+    assert "3 turns, life 1, Starting Room in The Castle" in run_cli([], saves=True)
+    assert "Wrote the playthrough" in run_cli([], export="")
     assert "take sword" in (slot.path / "playthrough.html").read_text()
     with pytest.raises(SystemExit, match="no saved game called nope"):
-        run([], load="nope")
+        run_cli([], load="nope")
 
 
 def test_browser_games_autosave_and_resume_with_their_journal(tmp_path, monkeypatch):

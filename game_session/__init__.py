@@ -1,19 +1,18 @@
 """One game session shared by the terminal and browser interfaces."""
 
-from copy import deepcopy
-from dataclasses import dataclass
-
 from adaptation_ai import AdaptationAI
 from behavior_analyzer import BehaviorAnalyzer
 from command_parser import parse_command
 from content_generator import ContentGenerator
-from game_world import find_among, noun, world_map
-from room_companion import Avatar, Cutscene, Portrait, Scene
+from game_world import find_among, fresh_world, noun
+from room_companion.scenes import Avatar, Cutscene, Portrait, Scene
 from saga import CASTLE_HORIZON, Saga
+from saga.catalog import StoryError, nomination
 from simulation_engine import GameState
-from story_catalog import StoryError, nomination
 from trials import GiantTable
 from usage import Meter, metering
+
+from .journal import TurnEvent
 
 HELP_TEXT = """Available commands:
   LOOK          - Look around the current room
@@ -45,20 +44,12 @@ def _extend(saga, rooms, game_state, profile_summary, report):
     return f"To the {direction} there is only grey mist so far. Go {direction} when you want to look again."
 
 
-@dataclass(frozen=True)
-class TurnEvent:
-    """A player-visible message in the order it occurred."""
-
-    kind: str
-    text: str
-
-
 class GameSession:
     """Own one player's world and run its commands in order."""
 
     def __init__(self, initial_world=None, *, edition="", plans=(), catalog_path=None):
         """Start at the castle entrance with a private copy of the world."""
-        self.rooms = deepcopy(world_map if initial_world is None else initial_world)
+        self.rooms = fresh_world(initial_world)
         self.game = GameState()
         self.behavior = BehaviorAnalyzer()
         self.adaptation = AdaptationAI()

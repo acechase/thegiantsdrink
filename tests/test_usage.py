@@ -8,8 +8,8 @@ from game_session import GameSession
 from openai_client import complete
 from playthrough import render
 from saves import SaveSlot
-from tests.test_browser_game import submit
-from tests.test_game import OPENAI_URL, openai_api  # noqa: F401 - fixture
+from tests.support.browser import submit
+from tests.support.openai import OPENAI_URL
 from usage import Meter, metering
 
 USAGE = {"prompt_tokens": 120, "completion_tokens": 30, "completion_tokens_details": {"reasoning_tokens": 12}}
@@ -28,7 +28,7 @@ def test_meter_is_shared_by_staged_copies_and_survives_saves():
     assert restored.snapshot()["total"] == 9 and meter.snapshot()["total"] == 5
 
 
-def test_text_requests_bill_the_game_that_made_them(openai_api):  # noqa: F811
+def test_text_requests_bill_the_game_that_made_them(openai_api):
     openai_api.post(OPENAI_URL, json=reply("one"))
     openai_api.post(OPENAI_URL, json=reply("two", usage=None))
     openai_api.post(OPENAI_URL, json=reply("three"))
@@ -41,7 +41,7 @@ def test_text_requests_bill_the_game_that_made_them(openai_api):  # noqa: F811
     assert (tokens["text_in"], tokens["text_out"], tokens["reasoning"], tokens["text_calls"]) == (120, 30, 12, 2)
 
 
-def test_paintings_bill_the_game_from_the_illustrator_thread(openai_api, tmp_path):  # noqa: F811
+def test_paintings_bill_the_game_from_the_illustrator_thread(openai_api, tmp_path):
     jpeg = base64.b64encode(b"\xff\xd8\xff-art-\xff\xd9").decode()
     openai_api.post("https://api.openai.com/v1/images/generations",
                     json={"data": [{"b64_json": jpeg}], "usage": {"input_tokens": 80, "output_tokens": 400}})
@@ -58,7 +58,7 @@ def test_paintings_bill_the_game_from_the_illustrator_thread(openai_api, tmp_pat
     assert (tokens["image"], tokens["images"], tokens["total"]) == (480, 1, 480)
 
 
-def test_game_totals_are_saved_resumed_and_shown(openai_api, tmp_path, monkeypatch):  # noqa: F811
+def test_game_totals_are_saved_resumed_and_shown(openai_api, tmp_path, monkeypatch):
     monkeypatch.setattr(room_companion, "generate_image", lambda payload: b"art")
     openai_api.post(OPENAI_URL, json=reply('{"action":"examine","target":"candle"}'))
     session = GameSession()

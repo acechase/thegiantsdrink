@@ -13,11 +13,11 @@ from dotenv import load_dotenv
 from browser_game import play_in_browser
 from characters import DEFAULT, PRESETS, CharacterError, make
 from game_session import GameSession
-from game_world import world_map
+from game_session.journal import JournalTurn
 from playthrough import render
 from room_companion import open_companion
+from saga.catalog import Catalog, StoryError, bundle_bytes, export_nomination, read_nomination
 from saves import SaveError, SaveSlot
-from story_catalog import Catalog, StoryError, bundle_bytes, export_nomination, read_nomination
 
 
 @contextmanager
@@ -85,7 +85,7 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
                     print("\nThanks for playing The Giant's Drink!")
                     return
             catalog_path = str(Path(story_catalog).resolve()) if story_catalog else None
-            session = GameSession(world_map, edition=edition, plans=plans, catalog_path=catalog_path)
+            session = GameSession(edition=edition, plans=plans, catalog_path=catalog_path)
             if chosen is not None:
                 session.game.character = chosen
             slot, journal = SaveSlot.new(root), []
@@ -208,16 +208,12 @@ def _play(viewer, session, journal, slot):
         if command.casefold() == "nominate":
             _nominate(session, slot)
         elif command:
-            place = session.public_state()
+            turn = JournalTurn.start(len(journal) + 1, command, session.public_state())
             with _quiet_typeahead():
-                events = session.turn(command, lambda event: print(event.text, flush=True))
+                turn.events = session.turn(command, lambda event: print(event.text, flush=True))
                 if viewer and not session.ended:
                     session.show(viewer)
-            journal.append({
-                "turn": len(journal) + 1, "command": command, "place": place["name"], "chapter": place["chapter"],
-                "events": [{"kind": event.kind, "text": event.text} for event in events if event.kind != "activity"],
-                "art": session.turn_art(viewer) if viewer else None,
-            })
+            journal.append(turn.record(art=session.turn_art(viewer) if viewer else None))
             if slot:
                 try:
                     slot.save(session, journal)

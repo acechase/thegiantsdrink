@@ -4,6 +4,7 @@ import pytest
 
 from characters import STOCK
 from game_session import GameSession
+from tests.support.openai import scripted
 
 
 def test_arrival_prose_survives_inspection_then_updates_with_room(monkeypatch):
@@ -110,17 +111,6 @@ class Viewer:
 
     def show_portrait(self, portrait):
         self.shown.append(("portrait", portrait.place))
-
-
-def scripted(monkeypatch, replies):
-    """Answer parser and adjudicator calls in order, failing loudly on an unexpected request."""
-    replies = iter(replies)
-
-    def complete(*args, **kw):
-        return next(replies)
-
-    monkeypatch.setattr("command_parser.complete", complete)
-    monkeypatch.setattr("environment_actions.complete", complete)
 
 
 def test_portrait_shows_what_the_player_has_on_until_the_next_turn(castle, monkeypatch):

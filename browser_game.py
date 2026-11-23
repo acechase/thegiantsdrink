@@ -10,9 +10,13 @@ from copy import deepcopy
 from http.server import ThreadingHTTPServer
 
 from characters import MAX_DESCRIPTION, CharacterError, make, presets_public
+from game_session.journal import JournalTurn, TurnEvent
 from playthrough import render
-from room_companion import DEFAULT_IMAGE_MODEL, HERE, Avatar, RoomCompanion, ViewerHandler, launch_tab
-from story_catalog import StoryError, bundle_bytes
+from room_companion.images import DEFAULT_IMAGE_MODEL
+from room_companion.renderer import RoomCompanion
+from room_companion.scenes import Avatar
+from room_companion.server import ART_CACHE, STATIC_DIR, ViewerHandler, launch_tab
+from saga.catalog import StoryError, bundle_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +37,7 @@ class BrowserGame:
         self.condition = threading.Condition()
         self.closed = False
         self.pending = None
+        self.activity = ""
         self.journal = list(journal or [])
         self.receipts = {}
         self.room = session.public_state()
@@ -61,8 +66,8 @@ class BrowserGame:
                 return 409, {"error": "Choose your character first."}
             if ident in self.receipts:
                 turn = self.receipts[ident]
-                original = self.pending if turn > len(self.journal) else self.journal[turn - 1]
-                if turn != after + 1 or original["command"] != text:
+                original = self.pending.command if turn > len(self.journal) else self.journal[turn - 1]["command"]
+                if turn != after + 1 or original != text:
                     return 409, {"error": "This request ID belongs to a different command."}
                 return 202, {"id": ident, "turn": turn}
             if self.closed or self.room["ended"]:
@@ -72,8 +77,8 @@ class BrowserGame:
             if self.pending:
                 return 409, {"error": "Another turn is still running."}
             self.receipts[ident] = turn = after + 1
-            self.pending = {"id": ident, "turn": turn, "command": text, "place": self.room["name"],
-                            "chapter": self.room["chapter"], "events": [], "activity": "Starting the turn…"}
+            self.pending = JournalTurn.start(turn, text, self.room, request_id=ident)
+            self.activity = "Starting the turn…"
             self.condition.notify()
             return 202, {"id": ident, "turn": turn}
 
@@ -100,7 +105,8 @@ class BrowserGame:
         with self.condition:
             return {
                 "turn": len(self.journal), "room": self.room, "art": self.viewer.snapshot(),
-                "latest": self.journal[-1] if self.journal else None, "pending": self.pending,
+                "latest": self.journal[-1] if self.journal else None,
+                "pending": self.pending.preview(self.activity) if self.pending else None,
                 "save": self.saved, "avatar": self.avatar.snapshot() if self.avatar and self.choosing is None else None,
                 "character": self.room["character"], "choosing": self.choosing,
                 "cutscene": self.viewer.cutscenes.snapshot() if self.viewer.cutscenes else None,
@@ -139,10 +145,9 @@ class BrowserGame:
                 message = event.text
                 if message.startswith("[Procedural] Rejected the arc plan"):
                     message = "The next chapter is taking shape…"
-                self.pending = dict(self.pending, activity=message)
+                self.activity = message
             else:
-                events = [*self.pending["events"], {"kind": event.kind, "text": event.text}]
-                self.pending = dict(self.pending, events=events)
+                self.pending.events.append(event)
 
     def _work(self):
         while True:
@@ -150,7 +155,7 @@ class BrowserGame:
                 self.condition.wait_for(lambda: self.closed or self.pending is not None)
                 if self.closed:
                     return
-                command = self.pending["command"]
+                command = self.pending.command
             try:
                 # Stage changes so an unexpected failure cannot leave half a turn in play.
                 session = deepcopy(self.session)
@@ -162,17 +167,15 @@ class BrowserGame:
             with self.condition:
                 if self.closed:
                     return
-                entry = dict(self.pending)
-                del entry["activity"]
                 if session is None:
-                    entry["events"] = [{"kind": "error", "text": "The turn was interrupted. You can try that action again."}]
-                    entry["art"] = self.viewer.journal_art()
+                    self.pending.events = [TurnEvent("error", "The turn was interrupted. You can try that action again.")]
+                    art = self.viewer.journal_art()
                 else:
                     self.session, self.room = session, room
                     session.show(self.viewer)
                     self._dress(session)
-                    entry["art"] = session.turn_art(self.viewer)
-                self.journal.append(entry)
+                    art = session.turn_art(self.viewer)
+                self.journal.append(self.pending.record(art=art))
                 self.pending = None
                 session, journal = self.session, list(self.journal)
                 self.condition.notify_all()
@@ -270,9 +273,9 @@ class PlayHandler(ViewerHandler):
 @contextmanager
 def play_server(session, cache_dir, model, *, journal=None, store=None, choose_character=False):
     """Bind an ephemeral local port and own the game and illustration workers."""
-    page = (HERE / "play.html").read_bytes()
-    assets = {"/play.js": ("text/javascript; charset=utf-8", (HERE / "play.js").read_bytes()),
-              "/play.css": ("text/css; charset=utf-8", (HERE / "play.css").read_bytes())}
+    page = (STATIC_DIR / "play.html").read_bytes()
+    assets = {"/play.js": ("text/javascript; charset=utf-8", (STATIC_DIR / "play.js").read_bytes()),
+              "/play.css": ("text/css; charset=utf-8", (STATIC_DIR / "play.css").read_bytes())}
     with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
         server.viewer = RoomCompanion(cache_dir, model, meter=session.meter, cutscenes=True)
         server.avatar = RoomCompanion(cache_dir, model, meter=session.meter)
@@ -289,7 +292,7 @@ def play_in_browser(session, *, journal=None, store=None, choose_character=False
     """Open the local game and keep it available across tab closes and refreshes."""
     model = os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
     try:
-        with play_server(session, HERE / ".room-art", model, journal=journal, store=store,
+        with play_server(session, ART_CACHE, model, journal=journal, store=store,
                          choose_character=choose_character) as server:
             url = f"http://127.0.0.1:{server.server_port}/"
             if store:

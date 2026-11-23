@@ -49,16 +49,6 @@ def _ground(anchor, objects):
     return None
 
 
-def _engine_sentences(room):
-    """Room text the engine appends itself: loose items and an opened hidden route."""
-    sentences = [obj.room_text for obj in room.items if obj.room_text]
-    if room.trial:
-        sentences.append(room.trial.prose())
-    if room.challenge and room.challenge.warning:
-        sentences.append(room.challenge.warning)
-    return [*sentences, room.passage.visible] if room.passage_open else sentences
-
-
 def resolve_environment(game, room, command, reference, *, tool=None, report=None, fallback=None):
     """Interpret a free-form action, then validate and commit its local effects together."""
     objects = [*room.items, *room.scenery, *game.inventory]
@@ -68,7 +58,7 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
         return fallback
     inputs = {
         "room": room.name, "scene": room.prose(), "fixed_features": room.fixed_text(),
-        "engine_sentences": _engine_sentences(room),
+        "engine_sentences": room.engine_sentences(),
         "observed": room.seen_details,
         "loose": [obj.name for obj in room.items], "landmarks": [obj.name for obj in room.scenery],
         "removed_from_room": [obj.name for obj in room.departed],
@@ -81,7 +71,7 @@ def resolve_environment(game, room, command, reference, *, tool=None, report=Non
     if challenge:
         inputs["challenge"] = {
             "obstacle": challenge.obstacle, "barrier": challenge.barrier, "bars_the_way": challenge.blocks,
-            "planned_solutions": [f"{approach} with the {tool}" for tool, approach, _ in challenge.solutions],
+            "planned_solutions": [f"{solution.approach} with the {solution.tool}" for solution in challenge.solutions],
         }
     raw = complete(
         PROMPT, json.dumps(inputs), max_tokens=650, json_output=True, purpose="environmental interaction", report=report

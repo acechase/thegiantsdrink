@@ -213,7 +213,7 @@ pytest tests -v
 pytest tests --cov=. --cov-report=html
 
 # Generate API documentation
-pdoc --serve simulation_engine behavior_analyzer adaptation_ai content_generator
+python -m pdoc game_session game_world saga room_companion
 
 # Play the game locally
 python main.py
@@ -221,7 +221,7 @@ python main.py
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, commit conventions, and development workflow.
+Find the modules for new rooms, game rules, story arcs, and browser features in the [contributor guide](CONTRIBUTING.md#code-layout).
 
 This project follows [Conventional Commits](https://www.conventionalcommits.org) for all commit messages.
 

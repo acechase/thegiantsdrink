@@ -6,10 +6,11 @@ import pytest
 
 from game_session import GameSession
 from main import _nominate, _stories
+from saga import build_arc
 from saves import SaveSlot
-from story_catalog import Catalog, StoryError, bundle_bytes, nomination, read_nomination
-from tests.test_browser_game import running_server, submit
-from tests.test_game import EXPLORE_ORCHARD, arc_plan, expanded_arc_plan
+from story_catalog import Catalog, StoryError, bundle_bytes, nomination, read_nomination, validate_route
+from tests.support.browser import running_server, submit
+from tests.support.stories import EXPLORE_ORCHARD, arc_plan, expanded_arc_plan
 
 SOLVE = ("go north", "go north", "take silver bell", "go east", "use silver bell on glass heron")
 
@@ -176,3 +177,21 @@ def test_browser_only_previews_the_entered_route(tmp_path, monkeypatch):
             assert json.loads(response.read()) == nomination([expanded_arc_plan()])
         finally:
             client.close()
+
+
+def test_publication_rejects_a_reachable_branch_with_no_route_to_the_crossing():
+    plan = arc_plan()
+    entrance, grove, crossing = plan["rooms"]
+    entrance["exits"]["east"] = crossing["name"]
+    grove["exits"] = {"south": "Well House"}
+    plan["rooms"].append({
+        "name": "Well House",
+        "description": "A cold stone stair climbs back to the grove.",
+        "exits": {"north": grove["name"]},
+    })
+
+    # The grove and well are reachable from the entrance, but lead only to each other.
+    _, rooms = build_arc(json.dumps(plan), number=1, reserved="south", world={})
+    assert set(rooms) == {entrance["name"], grove["name"], crossing["name"], "Well House"}
+    with pytest.raises(StoryError, match="Arc 1: Some rooms cannot reach the crossing"):
+        validate_route([plan])
