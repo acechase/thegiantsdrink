@@ -279,10 +279,16 @@ def _stories(argv, queue):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["movie"]:
+        from movie import run
+
+        run(sys.argv[2:], Path(__file__).resolve().parent)
+        raise SystemExit(0)
     if sys.argv[1:2] == ["stories"]:
         _stories(sys.argv[2:], Path(__file__).with_name("saves") / "story-review")
         raise SystemExit(0)
-    cli = argparse.ArgumentParser(description="Play The Giant's Drink.")
+    cli = argparse.ArgumentParser(description="Play The Giant's Drink.",
+                                  epilog="Use main.py movie --help for movie export and voice design.")
     cli.add_argument("--browser", action="store_true", help="Play in a local browser with illustrations and cutscenes.")
     cli.add_argument("--visuals", action="store_true", help="Open an illustrated companion for terminal play.")
     cli.add_argument("--replay", metavar="EDITION", help="Reuse a published story. Use ID@REVISION to pick a revision.")

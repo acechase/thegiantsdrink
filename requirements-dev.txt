@@ -3,3 +3,4 @@ pytest-cov
 responses
 ruff
 pdoc
+-r requirements-movie.txt

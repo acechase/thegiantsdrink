@@ -107,6 +107,61 @@ To keep the story of a game that is still running on a build from before saving 
 ./.venv/bin/python main.py --archive http://127.0.0.1:64482
 ```
 
+## Making a playthrough movie
+
+The movie exporter adapts a saved journal into a short story. It drafts a screenplay with source turn numbers,
+favors paintings of the player's actual discoveries, and uses Gemini for the narrator and the giant. Speech
+sets the pace of each scene. The MP4 includes animated camera moves, captions, and chapter markers.
+
+Install [FFmpeg](https://ffmpeg.org/download.html) with H.264 (`libx264`) and AAC support. In the game's virtual
+environment, install the optional rendering dependency:
+
+```bash
+./.venv/bin/python -m pip install -r requirements-movie.txt
+```
+
+Use the existing `OPENAI_API_KEY` to draft from the journal, and add `GEMINI_API_KEY` to `.env` for speech. Drafting
+sends the selected journal text to OpenAI. Gemini receives the spoken passages and delivery directions. Use an
+existing screenplay to skip drafting, or add `--silent` to review the picture and captions without speech requests.
+
+```bash
+./.venv/bin/python main.py movie export 2026-11-20_15-32-07 --script-only
+./.venv/bin/python main.py movie export 2026-11-20_15-32-07 --silent --output preview.mp4
+./.venv/bin/python main.py movie export 2026-11-20_15-32-07 --music score.wav
+```
+
+With no save name, the command uses the latest save, including view-only archives. By default it writes
+`saves/<game>/screenplay.json` and `saves/<game>/movie.mp4`. Silent previews default to `movie-preview.mp4`.
+Edit the screenplay and rerun the same command.
+`--screenplay` lets you keep alternate drafts in separate files, and `--redraft` explicitly replaces the selected
+draft. Completed voice takes are cached in the save's `.movie-audio/` folder, so changes to the picture or score
+can reuse the dialogue, including after an interrupted export. The exporter tries Flash TTS first and switches to
+Flash-Lite on a quota error. Use `--speech-model` to pin a model.
+
+Each scene has a `title` and a list of source `turns`. Set `art` to an ordered list of painting turn numbers. Omit it
+to use the best cached painting from the source turns, or use an empty list for a title card. Set `speaker` to
+`narrator` or `giant`, write the spoken `text`, and put any delivery notes in `direction`. For a wordless scene, use
+`"speaker": null` and `"text": ""`. Set `motion` to `push`, `pull`, or `hold`. The `seconds` field sets the minimum hold.
+
+The girl preset uses Leda, Gemini’s youthful female voice. An explicit identity in an edited character
+description can change the casting. For example, “You are a boy of ten” selects Algieba. The unspecified
+child preset and older saves without character information use Algieba. The giant defaults to Algenib.
+Use `--narrator-voice` to choose a different voice or a custom voice ID for a particular export.
+
+You can create an original giant voice using Gemini Voice Design:
+
+```bash
+./.venv/bin/python main.py movie design-voice "The Giant at the Silver Table" \
+  "An ancient castle giant with a chest-resonant bass, a dry weathered grain, and quiet courtesy." \
+  --language en-GB --gender male --preview giant.wav
+
+./.venv/bin/python main.py movie export --giant-voice voice_YOUR_ID
+```
+
+Use `MOVIE_GIANT_VOICE` or `MOVIE_NARRATOR_VOICE` in `.env` to keep a casting choice for future exports.
+`movie design-voice` stores the voice in your Gemini project and shows its reusable ID. Without `--preview`,
+the WAV preview goes in `saves/voice-previews/` when Gemini supplies one.
+
 ## How to Play
 
 The terminal shows which parts of each turn use AI. `[AI]` appears as a request starts and names the model and task. `[Cached AI]` means the game reused an earlier model response. `[Procedural]` marks local game rules or written text. Movement, inventory, combat, and difficulty changes all run locally. For example, `go north` can show a procedural move followed by an AI request to describe the destination.
