@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from http.server import ThreadingHTTPServer
 
+from characters import MAX_DESCRIPTION, CharacterError, make, presets_public
 from playthrough import render
 from room_companion import DEFAULT_IMAGE_MODEL, HERE, Avatar, RoomCompanion, ViewerHandler, launch_tab
 from story_catalog import StoryError, bundle_bytes
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BrowserGame:
     """Serialize commands and publish completed turns separately from in-flight activity."""
 
-    def __init__(self, session, viewer, *, avatar=None, journal=None, store=None):
+    def __init__(self, session, viewer, *, avatar=None, journal=None, store=None, choose_character=False):
         """Start the command worker and publish the opening scene, continuing a saved journal if given.
 
         avatar, when given, is a second illustrator that keeps the player's character card current.
@@ -35,8 +36,13 @@ class BrowserGame:
         self.journal = list(journal or [])
         self.receipts = {}
         self.room = session.public_state()
+        self.choosing = None
+        if choose_character and not (self.journal or session.game.history or session.ended):
+            self.choosing = {"presets": presets_public(), "limit": MAX_DESCRIPTION}
+            self.room["character"] = None
         session.show(self.viewer)
-        self._dress(session)
+        if self.choosing is None:
+            self._dress(session)
         self.worker = threading.Thread(target=self._work, name="game-turns", daemon=True)
         self.worker.start()
 
@@ -51,6 +57,8 @@ class BrowserGame:
             return 400, {"error": "Enter a command of up to 2,000 characters and a valid turn number."}
         text = text.strip()
         with self.condition:
+            if self.choosing is not None:
+                return 409, {"error": "Choose your character first."}
             if ident in self.receipts:
                 turn = self.receipts[ident]
                 original = self.pending if turn > len(self.journal) else self.journal[turn - 1]
@@ -69,13 +77,32 @@ class BrowserGame:
             self.condition.notify()
             return 202, {"id": ident, "turn": turn}
 
+    def choose_character(self, payload):
+        """Set the starting character once, before any commands can run."""
+        with self.condition:
+            if self.choosing is None or self.closed:
+                return 409, {"error": "The starting character cannot be changed."}
+            if not isinstance(payload, dict):
+                return 400, {"error": "Expected a character object."}
+            description = payload.get("description")
+            try:
+                character = make(payload.get("preset"), "" if description is None else description)
+            except CharacterError as exc:
+                return 400, {"error": str(exc)}
+            self.session.game.character = character
+            self.room = self.session.public_state()
+            self.choosing = None
+            self._dress(self.session)
+            return 200, self.snapshot()
+
     def snapshot(self):
         """Return a consistent public view without reading the worker's mutable world."""
         with self.condition:
             return {
                 "turn": len(self.journal), "room": self.room, "art": self.viewer.snapshot(),
                 "latest": self.journal[-1] if self.journal else None, "pending": self.pending,
-                "save": self.saved, "avatar": self.avatar.snapshot() if self.avatar else None,
+                "save": self.saved, "avatar": self.avatar.snapshot() if self.avatar and self.choosing is None else None,
+                "character": self.room["character"], "choosing": self.choosing,
                 "cutscene": self.viewer.cutscenes.snapshot() if self.viewer.cutscenes else None,
                 "tokens": self.session.meter.snapshot(),
             }
@@ -88,7 +115,7 @@ class BrowserGame:
         """Render every turn so far as a shareable page."""
         with self.condition:
             record = {"journal": list(self.journal), "lessons": self.room["lessons"], "life": self.room["life"],
-                      "tokens": self.session.meter.snapshot()}
+                      "tokens": self.session.meter.snapshot(), "character": self.room["character"]}
         if self.store:
             record["started"] = self.store.record().get("started", "")
         return render(record, self.viewer.cache_dir)
@@ -214,31 +241,34 @@ class PlayHandler(ViewerHandler):
             super().do_GET()
 
     def do_POST(self):
-        """Accept an illustration retry or a bounded JSON command from this game page."""
+        """Accept an illustration retry or bounded JSON from this game page."""
         if not self._valid_host() or not self._same_origin():
             self.send_error(403)
             return
-        if self.path != "/commands":
+        if self.path not in ("/commands", "/character"):
             super().do_POST()
             return
+        command = self.path == "/commands"
+        kind = "command" if command else "character"
         if self.headers.get_content_type() != "application/json":
             self._json(415, {"error": "Expected application/json."})
             return
         size = self.headers.get("Content-Length", "")
         if not re.fullmatch(r"[0-9]{1,5}", size) or not 0 < int(size) <= 16384:
-            self._json(413, {"error": "Invalid command body size."})
+            self._json(413, {"error": f"Invalid {kind} body size."})
             return
         try:
             self.connection.settimeout(5)
             payload = json.loads(self.rfile.read(int(size)).decode("utf-8"))
         except (ValueError, OSError, RecursionError):
-            self._json(400, {"error": "Could not read the command."})
+            self._json(400, {"error": f"Could not read the {kind}."})
             return
-        self._json(*self.server.game.submit(payload))
+        handler = self.server.game.submit if command else self.server.game.choose_character
+        self._json(*handler(payload))
 
 
 @contextmanager
-def play_server(session, cache_dir, model, *, journal=None, store=None):
+def play_server(session, cache_dir, model, *, journal=None, store=None, choose_character=False):
     """Bind an ephemeral local port and own the game and illustration workers."""
     page = (HERE / "play.html").read_bytes()
     assets = {"/play.js": ("text/javascript; charset=utf-8", (HERE / "play.js").read_bytes()),
@@ -246,7 +276,8 @@ def play_server(session, cache_dir, model, *, journal=None, store=None):
     with ThreadingHTTPServer(("127.0.0.1", 0), PlayHandler) as server:
         server.viewer = RoomCompanion(cache_dir, model, meter=session.meter, cutscenes=True)
         server.avatar = RoomCompanion(cache_dir, model, meter=session.meter)
-        server.game = BrowserGame(session, server.viewer, avatar=server.avatar, journal=journal, store=store)
+        server.game = BrowserGame(session, server.viewer, avatar=server.avatar, journal=journal, store=store,
+                                  choose_character=choose_character)
         server.page, server.assets = page, assets
         try:
             yield server
@@ -254,11 +285,12 @@ def play_server(session, cache_dir, model, *, journal=None, store=None):
             server.game.close()
 
 
-def play_in_browser(session, *, journal=None, store=None):
+def play_in_browser(session, *, journal=None, store=None, choose_character=False):
     """Open the local game and keep it available across tab closes and refreshes."""
     model = os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
     try:
-        with play_server(session, HERE / ".room-art", model, journal=journal, store=store) as server:
+        with play_server(session, HERE / ".room-art", model, journal=journal, store=store,
+                         choose_character=choose_character) as server:
             url = f"http://127.0.0.1:{server.server_port}/"
             if store:
                 print(f"Autosaving as {store.ident}. Resume later with --continue or --load {store.ident}.")

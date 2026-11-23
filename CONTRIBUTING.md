@@ -45,6 +45,10 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
+## Starting characters
+
+Add new starting characters to `characters.PRESETS`. Give each preset a unique key, a display name, and a second-person description that includes the character's base clothes and fits within `characters.MAX_DESCRIPTION`. Presets appear in order in the browser and terminal choosers.
+
 ## Running Tests
 
 ```bash

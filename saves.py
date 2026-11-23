@@ -146,7 +146,8 @@ class SaveSlot:
         record = {
             "format": FORMAT, "id": self.ident, "started": previous.get("started", now), "updated": now,
             "turns": len(journal), "place": room["name"], "chapter": room["chapter"], "life": room["life"],
-            "lessons": room["lessons"], "wearing": room.get("worn", []), "tokens": tokens, "journal": journal,
+            "lessons": room["lessons"], "wearing": room.get("worn", []), "character": room.get("character"),
+            "tokens": tokens, "journal": journal,
         }
         self.path.mkdir(parents=True, exist_ok=True)
         write_atomic(self.path / "game.json", json.dumps(record, ensure_ascii=False, indent=1).encode("utf-8"))

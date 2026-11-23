@@ -25,6 +25,22 @@
     <div id="drawer-body"></div>
     <button id="older" hidden>Earlier turns</button>
   </aside>
+  <dialog id="character" aria-labelledby="character-title">
+    <h2 id="character-title">Who enters the castle?</h2>
+    <form id="character-form">
+      <fieldset id="character-choices">
+        <legend class="sr">Starting character</legend>
+        <div id="character-presets"></div>
+      </fieldset>
+      <label for="character-description">Your character description</label>
+      <textarea id="character-description" rows="4" aria-describedby="character-count" autofocus></textarea>
+      <div class="character-actions">
+        <span id="character-count"></span>
+        <button id="begin" type="submit" disabled>Begin</button>
+      </div>
+      <p id="character-error" role="alert"></p>
+    </form>
+  </dialog>
   <dialog id="nomination" aria-labelledby="nomination-title">
     <h2 id="nomination-title">Nominate storyline</h2>
     <p>Review the story text for personal details. Download the file to send to the game maintainer.</p>

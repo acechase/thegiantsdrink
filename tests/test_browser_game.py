@@ -8,6 +8,7 @@ import pytest
 import room_companion
 import saga
 from browser_game import BrowserGame, play_server
+from characters import MAX_DESCRIPTION, STOCK, make, presets_public
 from game_session import GameSession
 from tests.test_game import EXPLORE_ORCHARD, expanded_arc_plan
 
@@ -129,9 +130,9 @@ def test_pending_gate_obstacle_and_chapter_survive_browser_turns(game, monkeypat
 
 
 @contextmanager
-def running_server(tmp_path, monkeypatch, session=None):
-    monkeypatch.setattr(room_companion, "generate_image", lambda payload: b"art")
-    with play_server(session or GameSession(), tmp_path, "test-model") as server:
+def running_server(tmp_path, monkeypatch, session=None, *, illustrate=lambda payload: b"art", **options):
+    monkeypatch.setattr(room_companion, "generate_image", illustrate)
+    with play_server(session or GameSession(), tmp_path, "test-model", **options) as server:
         worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         worker.start()
         try:
@@ -139,6 +140,99 @@ def running_server(tmp_path, monkeypatch, session=None):
         finally:
             server.shutdown()
             worker.join(timeout=2)
+
+
+def http_request(port, method, path, payload=None, headers=None):
+    client = HTTPConnection("127.0.0.1", port, timeout=2)
+    try:
+        client.request(method, path, payload, headers or {})
+        response = client.getresponse()
+        return response.status, response.read()
+    finally:
+        client.close()
+
+
+def test_browser_character_chooser(tmp_path, monkeypatch):
+    cards = []
+
+    def illustrate(payload):
+        if "character card" in payload["prompt"]:
+            cards.append(payload["prompt"])
+        return b"art"
+
+    with running_server(tmp_path, monkeypatch, choose_character=True, illustrate=illustrate) as server:
+        port = server.server_port
+        headers = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"}
+        status, page = http_request(port, "GET", "/")
+        assert status == 200 and b'<dialog id="character"' in page and b"Who enters the castle?" in page
+        assert b'<label for="character-description">' in page and b'<textarea id="character-description"' in page
+
+        status, body = http_request(port, "GET", "/state")
+        state = json.loads(body)
+        assert status == 200 and state["turn"] == 0
+        assert state["choosing"] == {"presets": presets_public(), "limit": MAX_DESCRIPTION}
+        assert state["character"] is state["room"]["character"] is state["avatar"] is None
+        assert state["art"]["kind"] == "room"
+        assert server.avatar.snapshot() == {"status": "waiting"} and not cards
+
+        command = json.dumps({"id": "first", "command": "look at yourself", "after": 0})
+        status, body = http_request(port, "POST", "/commands", command, headers)
+        assert status == 409 and json.loads(body) == {"error": "Choose your character first."}
+
+        def choose(preset, description, **overrides):
+            body = json.dumps({"preset": preset, "description": description})
+            return http_request(port, "POST", "/character", body, dict(headers, **overrides))
+
+        for preset, description, error in [
+            ("unknown", "You have a braid.", "Choose a known character preset."),
+            ("girl", " \t ", "Enter a character description."),
+            ("girl", None, "Enter a character description."),
+            ("girl", "x" * (MAX_DESCRIPTION + 1),
+             f"Keep your character description to {MAX_DESCRIPTION} characters or fewer."),
+        ]:
+            status, body = choose(preset, description)
+            assert status == 400 and json.loads(body) == {"error": error}
+        description = "You have a dark braid and <bright> boots."
+        assert choose("girl", description, Host="example.invalid")[0] == 403
+        assert choose("girl", description, Origin="http://example.invalid")[0] == 403
+        assert choose("girl", description, **{"Content-Type": "text/plain"})[0] == 415
+        assert choose("girl", description, **{"Content-Length": "20000"})[0] == 413
+        assert server.avatar.snapshot() == {"status": "waiting"} and not cards
+
+        status, body = choose("girl", f"  {description}\n")
+        state = json.loads(body)
+        character = make("girl", description)
+        assert status == 200 and state["choosing"] is None and state["turn"] == 0
+        assert server.game.session.game.character == character
+        assert state["character"] == state["room"]["character"] == character.public()
+        with server.avatar._condition:
+            assert server.avatar._condition.wait_for(lambda: server.avatar.snapshot()["status"] == "ready", timeout=3)
+        assert len(cards) == 1 and description in cards[0]
+        assert choose("child", STOCK.description)[0] == 409
+        assert b"&lt;bright&gt;" in http_request(port, "GET", "/playthrough")[1]
+        assert http_request(port, "POST", "/commands", command, headers)[0] == 202
+        with server.game.condition:
+            assert server.game.condition.wait_for(lambda: len(server.game.journal) == 1, timeout=3)
+        state = json.loads(http_request(port, "GET", "/state")[1])
+        assert description in state["latest"]["events"][-1]["text"]
+
+
+@pytest.mark.parametrize("choose_character,journal,has_history", [
+    (False, None, False), (True, [{"turn": 1}], False), (True, None, True),
+])
+def test_browser_character_chooser_is_disabled(tmp_path, monkeypatch, choose_character, journal, has_history):
+    session = GameSession()
+    session.game.character = make("girl")
+    if has_history:
+        session.turn("look")
+    with running_server(tmp_path, monkeypatch, session, choose_character=choose_character, journal=journal) as server:
+        port = server.server_port
+        state = json.loads(http_request(port, "GET", "/state")[1])
+        assert state["choosing"] is None and state["character"] == session.game.character.public()
+        assert state["avatar"]["kind"] == "avatar"
+        headers = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"}
+        body = json.dumps({"preset": "child", "description": STOCK.description})
+        assert http_request(port, "POST", "/character", body, headers)[0] == 409
 
 
 def test_discovery_paintings_queue_without_blocking_turns_or_losing_earlier_scenes(tmp_path, monkeypatch):
@@ -194,13 +288,7 @@ def test_http_game_refresh_quit_and_validation(tmp_path, monkeypatch):
         port = server.server_port
 
         def request(method, path, payload=None, headers=None):
-            client = HTTPConnection("127.0.0.1", port, timeout=2)
-            try:
-                client.request(method, path, payload, headers or {})
-                response = client.getresponse()
-                return response.status, response.read()
-            finally:
-                client.close()
+            return http_request(port, method, path, payload, headers)
 
         headers = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"}
         assert request("GET", "/")[0] == request("GET", "/play.js")[0] == request("GET", "/play.css")[0] == 200

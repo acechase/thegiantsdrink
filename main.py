@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from browser_game import play_in_browser
+from characters import DEFAULT, PRESETS, CharacterError, make
 from game_session import GameSession
 from game_world import world_map
 from playthrough import render
@@ -44,7 +45,7 @@ def _quiet_typeahead():
 
 
 def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, export=None, archive=None,
-         replay=None, story_catalog=None):
+         replay=None, story_catalog=None, character=None, character_description=None):
     """Start, resume, list or export games. Playing uses the configured OpenAI credentials."""
     here = Path(__file__).parent
     root = here / "saves"
@@ -64,22 +65,35 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
 
         if replay and (resume or load):
             raise StoryError("Choose a replay edition when starting a new game. A resumed game keeps its edition.")
+        resuming = resume or load is not None
+        has_character = character is not None or character_description is not None
+        if resuming and has_character:
+            raise CharacterError("A resumed game keeps its character.")
+        chosen = make(DEFAULT if character is None else character, character_description) if has_character else None
         edition, plans = Catalog(story_catalog).route(replay) if replay else ("", ())
         load_dotenv(here / ".env")
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit("Set OPENAI_API_KEY in your environment or in the game's .env file to play.")
-        if resume or load:
+        if resuming:
             slot = SaveSlot.find(root, load)
             session, journal = slot.load()
         else:
+            if chosen is None and not browser and sys.stdin.isatty():
+                try:
+                    chosen = _choose_character()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nThanks for playing The Giant's Drink!")
+                    return
             catalog_path = str(Path(story_catalog).resolve()) if story_catalog else None
             session = GameSession(world_map, edition=edition, plans=plans, catalog_path=catalog_path)
+            if chosen is not None:
+                session.game.character = chosen
             slot, journal = SaveSlot.new(root), []
-    except (SaveError, StoryError) as exc:
+    except (CharacterError, SaveError, StoryError) as exc:
         raise SystemExit(str(exc)) from None
 
     if browser:
-        play_in_browser(session, journal=journal, store=slot)
+        play_in_browser(session, journal=journal, store=slot, choose_character=not resuming and not has_character)
         return
     with open_companion(session.meter) if visuals else nullcontext(None) as viewer:
         _play(viewer, session, journal, slot)
@@ -87,6 +101,44 @@ def main(*, visuals=False, browser=False, resume=False, load=None, saves=False, 
     paintings = "illustration" if tokens["images"] == 1 else "illustrations"
     print(f"This game has used {tokens['total']:,} AI tokens: {tokens['text']:,} for text and "
           f"{tokens['image']:,} for {tokens['images']} {paintings}.")
+
+
+def _edit_description(text):
+    try:
+        import readline
+    except ImportError:
+        readline = None
+    # The libedit backend can expose the startup hook without running it.
+    if readline is None or "libedit" in (readline.__doc__ or "") or not sys.stdout.isatty():
+        print(text)
+        return input("> ") or text
+    readline.set_startup_hook(lambda: readline.insert_text(text))
+    try:
+        return input("> ")
+    finally:
+        readline.set_startup_hook()
+
+
+def _choose_character():
+    print("Who enters the castle?")
+    choices = {str(index): preset for index, preset in enumerate(PRESETS, 1)}
+    for index, preset in choices.items():
+        name, description = PRESETS[preset]
+        print(f"  {index}. {name} — {description}")
+    options = " or ".join(choices)
+    while True:
+        choice = input(f"Choose {options} (Enter for 1): ").strip() or "1"
+        if choice in choices:
+            break
+        print(f"Choose {options}.")
+    preset = choices[choice]
+    text = PRESETS[preset][1]
+    print("Edit your description, then press Enter. Enter alone keeps it.")
+    while True:
+        try:
+            return make(preset, _edit_description(text))
+        except CharacterError as exc:
+            print(exc)
 
 
 def _archive(root, url):
@@ -239,6 +291,8 @@ if __name__ == "__main__":
     cli.add_argument("--visuals", action="store_true", help="Open an illustrated companion for terminal play.")
     cli.add_argument("--replay", metavar="EDITION", help="Reuse a published story. Use ID@REVISION to pick a revision.")
     cli.add_argument("--story-catalog", metavar="PATH", help="Use an alternate published SQLite story catalog.")
+    cli.add_argument("--character", choices=PRESETS, help="Choose a starting character for a new game.")
+    cli.add_argument("--character-description", metavar="TEXT", help="Set your starting character's description.")
     saved = cli.add_mutually_exclusive_group()
     saved.add_argument("--continue", dest="resume", action="store_true", help="Resume your most recently played game.")
     saved.add_argument("--load", metavar="NAME", help="Resume a saved game by name.")

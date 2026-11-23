@@ -94,9 +94,12 @@ def render(record, art_dir):
                if lessons else "")
     art_css = "".join(f".a{key}{{background-image:url(data:image/jpeg;base64,{data})}}"
                       for key, data in images.items() if data)
+    character = record.get("character")
+    player = (f'<p><strong>{escape(str(character.get("name", "")))}</strong> '
+              f'{escape(str(character.get("description", "")))}</p>' if isinstance(character, dict) and character else "")
     title = "The Giant’s Drink"
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} · a playthrough</title>'
-            f"<style>{STYLE}{art_css}</style></head><body><main><h1>{title}</h1>"
-            f'<p class="meta">{escape(" · ".join(fact for fact in facts if fact))}</p>'
+            f"<style>{STYLE}{art_css}</style></head><body><main><header><h1>{title}</h1>"
+            f'<p class="meta">{escape(" · ".join(fact for fact in facts if fact))}</p>{player}</header>'
             f'{"".join(body) or "<p>No turns yet.</p>"}{learned}</main></body></html>')

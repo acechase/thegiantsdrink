@@ -100,7 +100,7 @@ class GameSession:
         return self.rooms[self.game.current_room]
 
     def public_state(self):
-        """Expose only the current visible scene, directions, and carried items."""
+        """Expose the visible scene and the player's public state."""
         room = self.room
         exits = list(self.scene.exits)
         gate = self.saga.gate
@@ -111,6 +111,7 @@ class GameSession:
             "chapter": self.saga.arcs[room.arc - 1].title if room.arc else "The Castle",
             "items": self.scene.items, "scenery": self.scene.scenery, "exits": exits,
             "inventory": [item.name for item in self.game.inventory], "worn": list(self.game.worn),
+            "character": self.game.character.public(),
             "containers": {item.name: [stored.name for stored in item.contents]
                            for item in self.game.inventory if item.contents is not None},
             "trail": [{"way": way, "room": name} for way, name in self.game.trail[-4:]], "ended": self.ended,

@@ -8,6 +8,7 @@ let state, connected = false, posting = false, acknowledged = false;
 let drawer = "", drawerTrigger, journalRequest = 0, oldest = null, workingSince = null;
 let imageURL = null, activeImage = null, entrySignature = "", avatarURL = null, avatarLoading = null;
 let nominationText = "", loadingNomination = false;
+let startingPreset, choosingCharacter = false;
 
 function remember(key, value) {
   try {
@@ -36,6 +37,86 @@ function commandButton(label, command, css = "") {
   item.type = "button";
   item.dataset.command = command;
   return item;
+}
+function characterDescription() {
+  // Match the server's whitespace and control-character handling before counting Unicode characters.
+  return el("character-description").value.replace(/[\p{White_Space}\u001c-\u001f]/gu, " ")
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, "").replace(/ +/g, " ").trim();
+}
+function characterControls() {
+  const length = [...characterDescription()].length;
+  const limit = state.choosing.limit;
+  text("character-count", length + " / " + limit);
+  el("character-choices").disabled = choosingCharacter;
+  el("character-description").readOnly = choosingCharacter;
+  el("begin").disabled = choosingCharacter || length === 0 || length > limit;
+}
+function saveCharacterDraft() {
+  remember("character-draft", JSON.stringify({preset: startingPreset.preset,
+    description: el("character-description").value}));
+  text("character-error", "");
+  characterControls();
+}
+function renderCharacter(choosing) {
+  const dialog = el("character");
+  if (!choosing) {
+    remember("character-draft", null);
+    if (dialog.open) {
+      dialog.close();
+      el("command").focus({preventScroll: true});
+    }
+    return;
+  }
+  let draft;
+  try { draft = JSON.parse(recall("character-draft")); } catch { /* Start with the first preset. */ }
+  startingPreset = choosing.presets.find(preset => preset.preset === draft?.preset) || choosing.presets[0];
+  const description = el("character-description");
+  description.value = draft?.preset === startingPreset.preset && typeof draft.description === "string"
+    ? draft.description : startingPreset.description;
+  const presets = el("character-presets");
+  presets.replaceChildren(...choosing.presets.map(preset => {
+    const card = node("label", "", "character-preset");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "character-preset";
+    radio.value = preset.preset;
+    radio.checked = preset === startingPreset;
+    radio.onchange = () => {
+      if (description.value !== startingPreset.description && !confirm("Replace your edits with this description?")) {
+        presets.querySelector(`input[value="${CSS.escape(startingPreset.preset)}"]`).checked = true;
+        return;
+      }
+      startingPreset = preset;
+      description.value = preset.description;
+      saveCharacterDraft();
+    };
+    card.append(radio, node("strong", preset.name), node("span", preset.description));
+    return card;
+  }));
+  characterControls();
+  dialog.showModal();
+}
+async function beginCharacter(event) {
+  event.preventDefault();
+  if (el("begin").disabled || !state?.choosing) return;
+  choosingCharacter = true;
+  characterControls();
+  text("character-error", "");
+  try {
+    const response = await fetch("/character", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({preset: startingPreset.preset, description: characterDescription()})});
+    const result = await response.json();
+    if (response.ok) {
+      if (state.choosing) renderState(result);
+    } else {
+      text("character-error", result.error || "Could not begin. Try again.");
+    }
+  } catch {
+    text("character-error", "Could not begin. Try again when connected.");
+  } finally {
+    choosingCharacter = false;
+    if (state.choosing) characterControls();
+  }
 }
 function renderRoom(room) {
   text("chapter", room.chapter + " · Life " + room.life + (room.story_edition ? " · Replay " + room.story_edition : ""));
@@ -106,6 +187,7 @@ function renderAvatar(avatar) {
   // The character card stays beside the room, except while the full portrait fills the illustration.
   el("you").hidden = !avatar || state.art.kind === "portrait";
   if (!avatar) return;
+  el("avatar-img").alt = state.character?.description || "";
   const room = state.room, worn = room.worn || [];
   const carried = room.inventory.filter(name => !worn.includes(name));
   const repainting = avatar.status === "queued" || avatar.status === "generating";
@@ -170,8 +252,9 @@ function renderEntry(entry) {
 }
 function controls() {
   const ended = Boolean(state?.room.ended);
-  const working = connected && Boolean(state) && !ended && Boolean(outbox || state.pending);
-  const busy = !connected || !state || working || ended;
+  const choosing = Boolean(state?.choosing);
+  const working = connected && Boolean(state) && !ended && !choosing && Boolean(outbox || state.pending);
+  const busy = !connected || !state || working || ended || choosing;
   if (!working) workingSince = null;
   else if (workingSince === null) workingSince = Date.now();
   const act = el("act");
@@ -180,7 +263,7 @@ function controls() {
   act.setAttribute("aria-busy", String(working));
   text("act-label", working ? "Thinking…" : ended ? "Ended" : "Act");
   el("act-key").hidden = working || ended;
-  el("command").disabled = ended;
+  el("command").disabled = ended || choosing;
   for (const btn of document.querySelectorAll("[data-command]")) btn.disabled = busy;
   if (ended) text("activity", "This session has ended. Your journal is still available.");
   else if (!connected) text("activity", state ? "Connection lost. Reconnecting…" : "Connecting to the game…");
@@ -282,7 +365,7 @@ function forgetRequest() {
   remember("outbox", null);
 }
 async function deliver() {
-  if (posting || acknowledged || !outbox || !connected) return;
+  if (posting || acknowledged || !outbox || !connected || state?.choosing) return;
   posting = true;
   const request = outbox;
   try {
@@ -307,6 +390,7 @@ async function deliver() {
   }
 }
 function submit(command, typed = false) {
+  if (state?.choosing) return;
   if (command.trim().toLowerCase() === "nominate") {
     previewNomination();
     return;
@@ -341,30 +425,37 @@ async function previewNomination() {
     el("nominate").disabled = false;
   }
 }
+function renderState(next) {
+  const changed = !state || state.turn !== next.turn;
+  const choiceChanged = !state || Boolean(state.choosing) !== Boolean(next.choosing);
+  state = next;
+  connected = true;
+  if (outbox && (state.latest?.id === outbox.id || state.pending?.id === outbox.id ||
+      (acknowledged && state.turn > outbox.after))) forgetRequest();
+  if (changed) {
+    const hadFocus = document.activeElement?.matches("[data-command], #guide");
+    renderRoom(state.room);
+    if (hadFocus && document.activeElement === document.body) el("command").focus({preventScroll: true});
+    if (drawer === "bag") renderBag();
+    if (drawer === "journal") loadJournal();
+  }
+  cutscenes.update(state.cutscene, state.art.key);
+  renderArt(state.art);
+  renderAvatar(state.avatar);
+  renderSave(state.save);
+  renderUsage(state.tokens);
+  renderEntry(state.pending || state.latest);
+  controls();
+  if (choiceChanged) renderCharacter(state.choosing);
+}
 async function poll() {
+  const previous = state;
   try {
     const response = await fetch("/state", {cache: "no-store"});
     if (!response.ok) throw Error();
     const next = await response.json();
-    const changed = !state || state.turn !== next.turn;
-    state = next;
-    connected = true;
-    if (outbox && (state.latest?.id === outbox.id || state.pending?.id === outbox.id ||
-        (acknowledged && state.turn > outbox.after))) forgetRequest();
-    if (changed) {
-      const hadFocus = document.activeElement?.matches("[data-command], #guide");
-      renderRoom(state.room);
-      if (hadFocus && document.activeElement === document.body) el("command").focus({preventScroll: true});
-      if (drawer === "bag") renderBag();
-      if (drawer === "journal") loadJournal();
-    }
-    cutscenes.update(state.cutscene, state.art.key);
-    renderArt(state.art);
-    renderAvatar(state.avatar);
-    renderSave(state.save);
-    renderUsage(state.tokens);
-    renderEntry(state.pending || state.latest);
-    controls();
+    if (state !== previous) return; // A character choice completed while this poll was in flight.
+    renderState(next);
     if (outbox) await deliver();
   } catch {
     connected = false;
@@ -379,6 +470,9 @@ document.addEventListener("click", e => {
   if (btn && !btn.disabled) submit(btn.dataset.command);
 });
 el("form").onsubmit = e => { e.preventDefault(); submit(el("command").value, true); };
+el("character").oncancel = e => e.preventDefault();
+el("character-form").onsubmit = beginCharacter;
+el("character-description").oninput = saveCharacterDraft;
 el("command").oninput = () => remember("draft", el("command").value);
 el("bag").onclick = () => openDrawer("bag", el("bag"));
 el("history").onclick = () => openDrawer("journal", el("history"));

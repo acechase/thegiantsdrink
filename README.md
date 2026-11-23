@@ -70,6 +70,19 @@ The first time you discover a technique, the game paints you mid-action with the
 
 If you’re carrying a tapestry, `make a bag from the tapestry` turns it into storage. Use `put salt in bag` to pack an item, `look in bag` to list the contents, and `take salt from bag` to retrieve it for use. The browser inventory also lists packed gear under the bag.
 
+## Choosing your character
+
+When you start a new browser game, choose **The child** or **The girl**, edit the starting description if you like, and select **Begin**. Refreshing the tab keeps your draft. In an interactive terminal, the game asks you to pick and edit a description before play.
+
+Use `--character` to select a preset from the command line and `--character-description` to supply your own text. Either flag skips the chooser in both interfaces. Using the description flag on its own starts from the child preset. Piped terminal play uses the child unless you provide a flag.
+
+```bash
+./.venv/bin/python main.py --browser --character girl
+./.venv/bin/python main.py --character girl --character-description "You are a small girl with a dark braid and worn brown boots."
+```
+
+Descriptions can be up to 600 characters. They guide paintings of your character and help the game judge what your character can physically do. Your starting description is set before play, and a resumed game keeps it.
+
 ## Saving and sharing
 
 Every game saves itself after each turn, in the browser and in the terminal. Each game gets a folder in `saves/` named after the moment it started, such as `saves/2026-11-20_15-32-07/`.

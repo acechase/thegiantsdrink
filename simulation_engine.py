@@ -1,6 +1,7 @@
 # simulation_engine.py
 import re
 
+from characters import STOCK
 from environment_actions import resolve_environment
 from game_world import OPPOSITE, find_among, find_object, noun
 from trials import FallingStairs, GiantTable
@@ -24,6 +25,7 @@ class GameState:
 
     def __init__(self):
         """Initialize a new game state in the Starting Room with empty inventory."""
+        self.character = STOCK
         self.current_room = "Starting Room"
         self.inventory = []
         self.giant_defeated = False
@@ -99,7 +101,7 @@ class GameState:
         return f"You put the {item.name} in the {bag.name}."
 
     def appearance(self):
-        """Describe what the player has on and in hand, without inventing anything else."""
+        """Describe the player and what they wear and carry."""
         def listed(names):
             names = [f"the {name}" for name in names]
             return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
@@ -107,7 +109,7 @@ class GameState:
         worn = [how for _, how in self.wearing()]
         held = [item.name for item in self.inventory if item.name not in self.worn]
         return " ".join([
-            "You look yourself over.",
+            "You look yourself over.", self.character.description,
             *(worn or ["You have nothing from the castle on."]),
             f"You carry {listed(held)}." if held else "Your hands are empty.",
         ])

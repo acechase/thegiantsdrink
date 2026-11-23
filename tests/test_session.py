@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from characters import STOCK
 from game_session import GameSession
 
 
@@ -135,7 +136,7 @@ def test_portrait_shows_what_the_player_has_on_until_the_next_turn(castle, monke
     castle.turn("wear the chain like a necklace")
     viewer = Viewer()
     text = castle.turn("look at yourself")[-1].text
-    assert text == ("You look yourself over. The iron helm sits low over your brow. "
+    assert text == (f"You look yourself over. {STOCK.description} The iron helm sits low over your brow. "
                     "The iron chain loops around your neck like a necklace. You carry the rusty sword.")
     castle.show(viewer)
     prompt = castle.portrait.request("model")["prompt"]
@@ -150,7 +151,7 @@ def test_portrait_shows_what_the_player_has_on_until_the_next_turn(castle, monke
     castle.turn("drop chain")
     castle.turn("take chain")
     assert castle.public_state()["worn"] == []
-    assert castle.turn("me")[-1].text == ("You look yourself over. You have nothing from the castle on. "
+    assert castle.turn("me")[-1].text == (f"You look yourself over. {STOCK.description} You have nothing from the castle on. "
                                           "You carry the rusty sword, the iron helm and the iron chain.")
 
 

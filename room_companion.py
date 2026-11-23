@@ -15,6 +15,7 @@ from tempfile import NamedTemporaryFile
 
 import requests
 
+from characters import STOCK
 from usage import metering, record_image
 
 HERE = Path(__file__).resolve().parent
@@ -28,12 +29,6 @@ STYLE = (
     "containers, rugs, props, creatures or decorations that the text does not mention. Leave out unseen "
     "destinations, the player, lettering, icons and interface elements."
 )
-# The same character in every portrait, so repaintings read as one person changing outfits.
-PLAYER_LOOK = (
-    "one small, slight child of about ten, gender left ambiguous, with a mop of dark brown hair, a pale freckled "
-    "face and steady grey eyes. Beneath what is listed below they wear a plain charcoal tunic, dark trousers and "
-    "worn brown boots"
-)
 PAINTING = (
     "in the same illustrated field-guide style as the game's room paintings: fine gouache brushwork, restrained "
     "slate blues, earthy umber and localized warm light"
@@ -43,23 +38,29 @@ OUTFIT_RULES = (
     "bags or capes. No lettering anywhere, including book covers, and no icons or interface elements."
 )
 PORTRAIT_STYLE = (
-    f"Full-length character portrait for a surreal fairy-tale castle exploration game, {PAINTING}. Show {PLAYER_LOOK}, "
-    "standing in three-quarter view at the center of a landscape frame, head and feet in view. "
+    f"Full-length character portrait for a surreal fairy-tale castle exploration game, {PAINTING}. "
+    "{figure} Pose them standing in three-quarter view at the center of a landscape frame, head and feet in view. "
     f"{OUTFIT_RULES} Behind the figure, loosely suggest the room named below in soft, unfocused shapes without "
     "distinct props."
 )
 AVATAR_STYLE = (
-    f"Full-length character card for a surreal fairy-tale castle exploration game, {PAINTING}. Show {PLAYER_LOOK}, "
-    "standing in three-quarter view and filling a tall frame, head and feet in view. "
+    f"Full-length character card for a surreal fairy-tale castle exploration game, {PAINTING}. "
+    "{figure} Pose them standing in three-quarter view and filling a tall frame, head and feet in view. "
     f"{OUTFIT_RULES} Set the figure against a plain, softly mottled parchment-and-slate wash with no setting."
 )
 CUTSCENE_STYLE = (
-    f"Landscape story illustration for a surreal fairy-tale castle exploration game, {PAINTING}. Show {PLAYER_LOOK}. "
+    f"Landscape story illustration for a surreal fairy-tale castle exploration game, {PAINTING}. "
+    "{figure} "
     "Use an outside camera angle and show the character in the middle of the action, with their hands, footing, "
     "and the thing they are interacting with clear. Capture one moment of motion. Use the supplied setting and "
     "only the visible objects and equipment described. The action may move an object or change how it is held. "
     f"{OUTFIT_RULES}"
 )
+
+
+def _figure(look):
+    return (f'Show the player character, described to the player in the second person: "{look}" '
+            "Paint exactly that person. Layer anything listed as worn below over their base clothes.")
 
 
 def _image_request(model, prompt, size="1536x1024"):
@@ -115,14 +116,15 @@ class Portrait:
     worn: tuple  # (item name, how it is worn, item description)
     carried: tuple  # (item name, item description)
     exits: tuple
+    look: str = STOCK.description  # Portraits from older saves have no look.
     kind = "portrait"
     name = "Your portrait"
     scenery = ()
 
     @classmethod
     def of(cls, game, room, description):
-        """Capture the player's current outfit from the game state."""
-        return cls(room.name, description, *_outfit(game), tuple(room.visible_exits))
+        """Capture the player and their current outfit."""
+        return cls(room.name, description, *_outfit(game), tuple(room.visible_exits), game.character.description)
 
     @property
     def items(self):
@@ -131,7 +133,8 @@ class Portrait:
 
     def request(self, model):
         """Build the image request used both for generation and cache identity."""
-        prompt = f"{PORTRAIT_STYLE}\nRoom behind the figure: {self.place}\n{_outfit_prompt(self.worn, self.carried)}"
+        style = PORTRAIT_STYLE.format(figure=_figure(self.look))
+        prompt = f"{style}\nRoom behind the figure: {self.place}\n{_outfit_prompt(self.worn, self.carried)}"
         return _image_request(model, prompt)
 
 
@@ -141,6 +144,7 @@ class Avatar:
 
     worn: tuple
     carried: tuple
+    look: str = STOCK.description  # Outfits in older cutscenes have no look.
     kind = "avatar"
     name = "You"
     description = ""
@@ -149,8 +153,8 @@ class Avatar:
 
     @classmethod
     def of(cls, game):
-        """Capture the player's current outfit from the game state."""
-        return cls(*_outfit(game))
+        """Capture the player and their current outfit."""
+        return cls(*_outfit(game), game.character.description)
 
     @property
     def items(self):
@@ -159,7 +163,8 @@ class Avatar:
 
     def request(self, model):
         """Build the image request used both for generation and cache identity."""
-        return _image_request(model, f"{AVATAR_STYLE}\n{_outfit_prompt(self.worn, self.carried)}", "1024x1536")
+        style = AVATAR_STYLE.format(figure=_figure(self.look))
+        return _image_request(model, f"{style}\n{_outfit_prompt(self.worn, self.carried)}", "1024x1536")
 
 
 @dataclass(frozen=True)
@@ -180,8 +185,9 @@ class Cutscene:
 
     def request(self, model):
         """Compose a cinematic moment from the actual action and equipment."""
+        style = CUTSCENE_STYLE.format(figure=_figure(self.outfit.look))
         prompt = (
-            f"{CUTSCENE_STYLE}\nSetting: {self.scene.name}. {self.scene.description}\n"
+            f"{style}\nSetting: {self.scene.name}. {self.scene.description}\n"
             f"Visible landmarks: {', '.join(self.scene.scenery) or 'none'}. "
             f"Visible loose items: {', '.join(self.scene.items) or 'none'}.\n"
             f"{_outfit_prompt(self.outfit.worn, self.outfit.carried)}\n"

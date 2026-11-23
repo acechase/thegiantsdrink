@@ -9,6 +9,7 @@ import pytest
 
 import room_companion
 from browser_game import BrowserGame
+from characters import STOCK, make
 from content_generator import ContentGenerator
 from game_session import GameSession
 from playthrough import render
@@ -34,12 +35,15 @@ def played(*commands):
 
 def test_a_saved_game_resumes_where_it_stopped(tmp_path):
     session, journal = played("take candle", "take helm", "north", "quit")
+    character = session.game.character = make("girl", "You are a girl in a <blue> coat.")
     slot = SaveSlot.new(tmp_path)
     slot.save(session, journal)
     record = slot.record()
     assert record["turns"] == 4 and record["place"] == "Corridor" and record["journal"] == journal
+    assert record["character"] == session.public_state()["character"] == character.public()
     resumed, saved_journal = SaveSlot.find(tmp_path).load()
     assert saved_journal == journal and resumed.room.name == "Corridor" and not resumed.ended
+    assert resumed.game.character == character
     assert [item.name for item in resumed.game.inventory] == ["candle"]
     assert resumed.game.trail == [("north", "Corridor")]
     assert "rusty sword" in [item.name for item in resumed.rooms["Starting Room"].items]
@@ -65,15 +69,21 @@ def test_saves_from_elsewhere_or_altered_saves_are_view_only(tmp_path):
 
 def test_older_saves_gain_state_added_since(tmp_path):
     slot = SaveSlot.new(tmp_path)
-    slot.save(*played("take candle"))
+    slot.save(*played("take sword", "use sword on wall", "look at yourself"))
     # Rewrite the snapshot as an older build would have pickled it, before these attributes existed.
     data = pickle.loads((slot.path / "state.bin").read_bytes()[32:])
     session = data["session"]
-    del session.game.worn, session.portrait, session.rooms["Great Staircase"].trial
+    del session.game.worn, session.game.character, session.discovered_actions, session.rooms["Great Staircase"].trial
+    object.__delattr__(session.portrait, "look")
+    object.__delattr__(session.cutscene.outfit, "look")
     snapshot = pickle.dumps(data)
     (slot.path / "state.bin").write_bytes(_sign(_key(tmp_path, create=False), snapshot) + snapshot)
     resumed, _ = slot.load()
-    assert resumed.game.worn == {} and resumed.portrait is None and resumed.rooms["Great Staircase"].trial is None
+    assert resumed.game.worn == {} and resumed.rooms["Great Staircase"].trial is None
+    assert resumed.discovered_actions == set()
+    assert resumed.game.character == STOCK
+    for painting in (resumed.portrait, resumed.cutscene):
+        assert STOCK.description in painting.request("model")["prompt"]
 
 
 def test_continue_picks_the_latest_resumable_game(tmp_path):
@@ -93,7 +103,8 @@ def test_playthrough_page_is_escaped_and_embeds_each_picture_once(tmp_path):
     (tmp_path / f"{room}.jpg").write_bytes(b"room-art")
     (tmp_path / f"{portrait}.jpg").write_bytes(b"portrait-art")
     turn = {"place": "Hall", "chapter": "The Castle", "events": [{"kind": "death", "text": "You die."}]}
-    record = {"started": "2026-11-20T15:32:07", "life": 2, "lessons": ["Hold the rail."], "journal": [
+    character = {"name": "<A name>", "description": "You wear a <blue> coat."}
+    record = {"started": "2026-11-20T15:32:07", "life": 2, "lessons": ["Hold the rail."], "character": character, "journal": [
         {**turn, "command": "<script>alert(1)</script>", "art": {"key": room, "kind": "room"}},
         {**turn, "command": "me", "art": {"key": portrait, "kind": "portrait"}},
         {**turn, "command": "look", "art": {"key": room, "kind": "room"}},
@@ -105,6 +116,9 @@ def test_playthrough_page_is_escaped_and_embeds_each_picture_once(tmp_path):
     assert page.count(f'class="art a{room}"') == 2 and f'class="art portrait a{portrait}"' in page
     assert "November 20, 2026 · 4 turns · 1 death · 1 chapter" in page and "<li>Hold the rail.</li>" in page
     assert 'class="bad' not in page and '<p class="death">You die.</p>' in page
+    assert "<A name>" not in page and "<blue>" not in page
+    assert page.count("&lt;A name&gt;") == page.count("You wear a &lt;blue&gt; coat.") == 1
+    assert page.index("You wear a &lt;blue&gt; coat.") < page.index("</header>")
 
 
 def test_saved_cutscene_survives_later_turns_and_does_not_repeat(tmp_path):
