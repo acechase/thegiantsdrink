@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Reworked the browser game layout for desktop and phones. Recent turns sit above the command box, exits and details are one row of quick actions, and the inventory stays beside the scene on wide screens. Inventory, journal and guides open over the scene on desktop and as a bottom sheet on phones. A menu holds the command guide, storyline nomination, session details and End session. `↑` recalls your last action and `/` focuses the command box.
 - Crafted gear can store items inside and carry attachments outside. Nested gear stays together across drops, pickups, and saves. The inventory drawer supports both operations and distinguishes identically named items.
 - Resuming a game repairs older tapestries that were described as finished bags. Browser games can reopen at a chosen local port using `--browser --port PORT`.
 - Command parsing and room narration now call OpenAI directly. Set `OPENAI_API_KEY` to play and optionally choose a model with `OPENAI_MODEL`.

@@ -9,6 +9,7 @@ let drawer = "", drawerTrigger, journalRequest = 0, oldest = null, workingSince 
 let imageURL = null, activeImage = null, entrySignature = "", avatarURL = null, avatarLoading = null;
 let nominationText = "", loadingNomination = false;
 let startingPreset, choosingCharacter = false;
+let recent = [], recentRequest = 0, moving = null, usageDetail = "", quitArmed = false;
 
 function remember(key, value) {
   try {
@@ -22,6 +23,7 @@ function recall(key) {
 let outbox = null;
 try { outbox = JSON.parse(recall("outbox")); } catch { remember("outbox", null); }
 el("command").value = recall("draft") || "";
+let lastTyped = recall("last-typed") || "";
 
 function text(id, value) {
   if (el(id).textContent !== value) el(id).textContent = value;
@@ -55,6 +57,7 @@ function saveCharacterDraft() {
   remember("character-draft", JSON.stringify({preset: startingPreset.preset,
     description: el("character-description").value}));
   text("character-error", "");
+  el("character-replace").hidden = true;
   characterControls();
 }
 function renderCharacter(choosing) {
@@ -74,6 +77,19 @@ function renderCharacter(choosing) {
   description.value = draft?.preset === startingPreset.preset && typeof draft.description === "string"
     ? draft.description : startingPreset.description;
   const presets = el("character-presets");
+  const check = preset => {
+    presets.querySelector(`input[value="${CSS.escape(preset.preset)}"]`).checked = true;
+  };
+  const choose = preset => {
+    startingPreset = preset;
+    description.value = preset.description;
+    check(preset);
+    saveCharacterDraft();
+  };
+  el("replace-no").onclick = () => {
+    el("character-replace").hidden = true;
+    description.focus();
+  };
   presets.replaceChildren(...choosing.presets.map(preset => {
     const card = node("label", "", "character-preset");
     const radio = document.createElement("input");
@@ -82,13 +98,18 @@ function renderCharacter(choosing) {
     radio.value = preset.preset;
     radio.checked = preset === startingPreset;
     radio.onchange = () => {
-      if (description.value !== startingPreset.description && !confirm("Replace your edits with this description?")) {
-        presets.querySelector(`input[value="${CSS.escape(startingPreset.preset)}"]`).checked = true;
+      if (description.value === startingPreset.description) {
+        choose(preset);
         return;
       }
-      startingPreset = preset;
-      description.value = preset.description;
-      saveCharacterDraft();
+      // Keep the edited description until the player confirms the swap.
+      check(startingPreset);
+      el("character-replace").hidden = false;
+      el("replace-yes").onclick = () => {
+        choose(preset);
+        description.focus();
+      };
+      el("replace-yes").focus();
     };
     card.append(radio, node("strong", preset.name), node("span", preset.description));
     return card;
@@ -118,31 +139,47 @@ async function beginCharacter(event) {
     if (state.choosing) characterControls();
   }
 }
+function renderCarrying(room) {
+  const roots = room.gear || [];
+  el("carrying").hidden = false;
+  text("carrying-title", "Carrying · " + room.inventory.length);
+  el("carried").replaceChildren(...(roots.length ? roots.map(item => {
+    const chip = commandButton(item.label, "examine " + item.label);
+    if (item.worn) chip.append(node("em", "worn"));
+    if (item.contents?.length) chip.append(node("em", "holds " + listed(item.contents.map(inside => inside.label))));
+    return chip;
+  }) : [node("p", "Nothing yet.")]));
+}
 function renderRoom(room) {
   text("chapter", room.chapter + " · Life " + room.life + (room.story_edition ? " · Replay " + room.story_edition : ""));
-  el("nominate").hidden = !room.can_nominate;
+  el("nominate").disabled = loadingNomination || !room.can_nominate;
+  el("nominate-note").hidden = room.can_nominate;
   el("lesson-list").replaceChildren(...room.lessons.map(lesson => node("li", lesson)));
   el("memories").hidden = drawer !== "journal" || !room.lessons.length;
   text("name", room.name);
   text("prose", room.description);
-  text("count", String(room.inventory.length));
+  text("count", room.inventory.length ? String(room.inventory.length) : "");
+  el("bag").setAttribute("aria-label", "Inventory, " + room.inventory.length + (room.inventory.length === 1 ? " item" : " items"));
+  // One row of quick actions: ways out, things to look at, then anything the room offers.
+  const chips = [];
+  if (room.exits.length) chips.push(node("span", "Go", "group"),
+    ...room.exits.map(d => commandButton((arrows[d] ? arrows[d] + " " : "") + title(d), "go " + d, "exit")));
   const objects = [...room.items, ...room.scenery];
-  el("object-row").hidden = !objects.length;
-  el("objects").replaceChildren(...objects.map(name => commandButton(name, "examine " + name)));
-  el("exit-row").hidden = !room.exits.length;
-  el("exits").replaceChildren(...room.exits.map(d => commandButton(arrows[d] + " " + title(d), "go " + d)));
-  el("trail-row").hidden = !room.trail.length;
-  el("trail").replaceChildren(...room.trail.map(step =>
-    node("li", step.way === "woke" ? "Woke at " + step.room : title(step.way) + " to " + step.room)));
+  if (objects.length) chips.push(node("span", "Examine", "group"), ...objects.map(name => {
+    const chip = commandButton("", "examine " + name);
+    chip.append(node("span", "Examine ", "verb"), name);
+    return chip;
+  }));
+  chips.push(...room.offers.map(label => commandButton(label, label)),
+    ...room.items.slice(0, 3).map(n => commandButton("Take " + n, "take " + n)));
+  el("chips").replaceChildren(...chips);
+  text("trail-line", "Trail: " + room.trail.map(step =>
+    step.way === "woke" ? "Woke at " + step.room : title(step.way) + " to " + step.room).join(" · "));
+  el("trail-line").hidden = drawer !== "journal" || !room.trail.length;
   const center = node("span", "✧");
   center.setAttribute("aria-hidden", "true");
   el("sketch").replaceChildren(center, ...room.exits.map(d => commandButton(title(d), "go " + d, d)));
-  const guide = node("button", "Command guide");
-  guide.id = "guide";
-  guide.onclick = () => openDrawer("guide", guide);
-  const offers = room.offers.map(label => commandButton(label, label));
-  const takes = room.items.slice(0, 3).map(n => commandButton("Take " + n, "take " + n));
-  el("suggestions").replaceChildren(...offers, ...takes, guide);
+  renderCarrying(room);
 }
 function renderArt(art) {
   const portrait = art.kind === "portrait";
@@ -154,7 +191,10 @@ function renderArt(art) {
   const cutscene = cutscenes.current;
   const retryArt = cutscene?.status === "error" ? cutscene : art;
   const paintingCutscene = ["queued", "generating"].includes(cutscene?.status);
-  text("art-status", paintingCutscene ? "Painting discovery…" : retryArt.error || statuses[art.status] || "");
+  // A finished room painting needs no caption; the footer keeps its status for whoever runs the game.
+  const settled = !portrait && !paintingCutscene && !retryArt.error && ["cached", "ready"].includes(art.status);
+  text("art-status", settled ? "" : paintingCutscene ? "Painting discovery…" : retryArt.error || statuses[art.status] || "");
+  text("art-debug", portrait ? "Portrait" : statuses[art.status] || "");
   el("retry").hidden = retryArt.status !== "error";
   text("retry", retryArt.kind === "cutscene" ? "Retry cutscene" : "Retry illustration");
   if (art.image === imageURL) return;
@@ -227,25 +267,62 @@ function renderUsage(tokens) {
     ". Illustrations: " + count(tokens.image, "token", "tokens") + " across " + count(tokens.images, "painting", "paintings") +
     ". Cached narration and art cost nothing.";
   if (el("usage").title !== detail) el("usage").title = detail;
+  usageDetail = detail;
 }
 function renderSave(save) {
   el("saved").classList.toggle("failed", Boolean(save?.error));
-  text("saved", !save ? "" : save.error ||
-    "Autosaved as " + save.id + " after turn " + save.turn + ". Resume later with --continue.");
+  text("saved", !save ? "" : save.error || "Saved · turn " + save.turn);
+  text("save-id", save ? "Save " + save.id : "");
 }
 function eventNodes(events, includeArrival) {
   return events.filter(event => includeArrival || event.kind !== "arrival").map(event =>
     node("p", event.text, event.kind === "chapter" ? "chapter-event" : event.kind));
 }
-function renderEntry(entry) {
-  const signature = JSON.stringify([entry?.turn, entry?.events]);
+async function loadRecent() {
+  const ticket = ++recentRequest;
+  try {
+    const response = await fetch("/journal", {cache: "no-store"});
+    if (!response.ok) throw Error();
+    const page = await response.json();
+    if (ticket !== recentRequest) return;
+    recent = page.entries.slice(0, 3).reverse();
+    renderLog();
+  } catch { /* The latest turn still shows; earlier ones return with the next turn. */ }
+}
+function rememberTurn() {
+  // Keep the last few committed turns so the story above the command box has context.
+  const latest = state.latest;
+  if (!latest) { recent = []; return; }
+  const last = recent.at(-1);
+  if (last?.turn === latest.turn) return;
+  if (last?.turn === latest.turn - 1) recent = [...recent, latest].slice(-3);
+  else {
+    recent = [latest];
+    if (latest.turn > 1) loadRecent();
+  }
+}
+function renderLog() {
+  const entry = state.pending || state.latest;
+  const earlier = entry ? recent.filter(past => past.turn < entry.turn).slice(-2) : [];
+  const signature = JSON.stringify([entry?.turn, entry?.events, earlier.map(past => past.turn)]);
   if (signature === entrySignature) return;
   entrySignature = signature;
-  el("latest").hidden = !entry;
+  el("log").hidden = !entry;
   if (!entry) return;
-  text("last-command", entry.command);
-  text("last-place", entry.place);
-  el("events").replaceChildren(...eventNodes(entry.events, false));
+  const past = earlier.map(turn => {
+    const item = node("li", "");
+    item.append(node("p", turn.command, "said"),
+      node("p", turn.events.filter(event => event.kind !== "arrival").map(event => event.text).join(" "), "then"));
+    return item;
+  });
+  const now = node("li", "", "now");
+  const events = node("div", "", "events");
+  events.append(...eventNodes(entry.events, false));
+  now.append(node("p", entry.command, "said"), events);
+  el("log").replaceChildren(...past, now);
+  // Bring the newest result into view, starting from its first line when it is longer than the story area.
+  const reading = el("reading");
+  reading.scrollTop = Math.min(now.offsetTop - 14, reading.scrollHeight - reading.clientHeight);
   const latestEvent = entry.events.at(-1);
   const death = entry.events.some(event => event.kind === "death");
   if (death) text("announcement", entry.events.filter(event => event.kind !== "arrival").map(event => event.text).join(" "));
@@ -265,7 +342,8 @@ function controls() {
   text("act-label", working ? "Thinking…" : ended ? "Ended" : "Act");
   el("act-key").hidden = working || ended;
   el("command").disabled = ended || choosing;
-  for (const btn of document.querySelectorAll("[data-command], [data-gear-select]")) btn.disabled = busy;
+  for (const btn of document.querySelectorAll("[data-command]")) btn.disabled = busy;
+  el("quit").disabled = busy;
   if (ended) text("activity", "This session has ended. Your journal is still available.");
   else if (!connected) text("activity", state ? "Connection lost. Reconnecting…" : "Connecting to the game…");
   else {
@@ -277,49 +355,66 @@ function controls() {
 
 function renderBag() {
   const roots = state?.room.gear || [];
-  const list = node("div", "", "carried");
-  function entry(item, root, parent, attached) {
-    const row = node("div", "", "gear-entry");
-    const examine = commandButton(item.label, "examine " + item.label);
+  const within = item => [item, ...[...(item.contents || []), ...(item.attachments || [])].flatMap(within)];
+  const list = node("div", "", "gear-list");
+  function entry(item, parent, attached) {
+    const wrap = node("div", "", "gear-item");
+    const row = node("div", "", "gear-row");
+    const examine = commandButton(item.label, "examine " + item.label, "gear-name");
+    if (item.worn) examine.append(node("em", "worn"));
+    if (item.contents?.length === 0) examine.append(node("em", "empty"));
+    if (parent) examine.append(node("em", attached ? "attached" : "inside"));
     row.append(examine);
-    if (item.worn) row.append(node("em", "worn"));
-    if (item.contents?.length === 0) row.append(node("em", "empty"));
+    wrap.append(row);
     if (parent) {
       const action = attached ? "Detach" : "Take out";
       const command = (attached ? "detach " : "take ") + item.label + " from " + parent.label;
-      const remove = commandButton(action, command);
+      const remove = commandButton(action, command, "row-action");
       remove.setAttribute("aria-label", action + " " + item.label + " from " + parent.label);
       row.append(remove);
-    }
-    function children(gear, outside) {
-      if (!gear) return;
-      const candidates = roots.filter(other => other.id !== root.id);
-      if (candidates.length) {
-        const select = document.createElement("select");
-        const label = outside ? "Attach to" : "Store in";
-        select.dataset.gearSelect = "";
-        select.setAttribute("aria-label", label + " " + item.label);
-        select.add(new Option(outside ? "Attach outside…" : "Store inside…", ""));
-        for (const other of candidates) select.add(new Option(other.label, other.label));
-        select.onchange = () => {
-          if (select.value) submit((outside ? "attach " : "put ") + select.value + (outside ? " to " : " in ") + item.label);
-          select.selectedIndex = 0;
+    } else {
+      // Anything else you carry that can hold or bear this item is a place to move it.
+      const targets = roots.filter(other => other.id !== item.id).flatMap(within).flatMap(other => [
+        other.contents ? ["Store in " + other.label, "put " + item.label + " in " + other.label] : null,
+        other.attachments ? ["Attach to " + other.label, "attach " + item.label + " to " + other.label] : null,
+      ]).filter(Boolean);
+      if (targets.length) {
+        const move = node("button", "Move", "row-action");
+        move.type = "button";
+        move.dataset.move = item.id;
+        move.setAttribute("aria-label", "Move " + item.label);
+        move.setAttribute("aria-expanded", String(moving === item.id));
+        move.onclick = () => {
+          moving = moving === item.id ? null : item.id;
+          renderBag();
+          controls();
+          el("drawer-body").querySelector(`[data-move="${CSS.escape(String(item.id))}"]`)?.focus();
         };
-        row.append(select);
-      }
-      if (gear.length) {
-        const group = node("div", "", "stored-items");
-        group.append(node("em", outside ? "Attached" : "Inside"),
-          ...gear.map(child => entry(child, root, item, outside)));
-        row.append(group);
+        row.append(move);
+        if (moving === item.id) {
+          const places = node("div", "", "move-targets");
+          places.append(...targets.map(([label, command]) => commandButton(label, command)));
+          wrap.append(places);
+        }
       }
     }
-    children(item.contents, false);
-    children(item.attachments, true);
-    return row;
+    for (const [gear, outside] of [[item.contents, false], [item.attachments, true]]) {
+      if (!gear?.length) continue;
+      const group = node("div", "", "stored-items");
+      group.append(...gear.map(child => entry(child, item, outside)));
+      wrap.append(group);
+    }
+    return wrap;
   }
-  list.append(...roots.map(item => entry(item, item, null, false)));
+  list.append(...roots.map(item => entry(item, null, false)));
   el("drawer-body").replaceChildren(roots.length ? list : node("p", "You’re carrying nothing."));
+}
+function renderSession() {
+  const save = state?.save;
+  el("drawer-body").replaceChildren(
+    node("p", state?.tokens ? exact.format(state.tokens.total) + " AI tokens this game. " + usageDetail : "No AI usage recorded yet."),
+    node("p", !save ? "This game is not being saved." : save.error ||
+      "Autosaved as " + save.id + " after turn " + save.turn + ". Resume later with --continue."));
 }
 async function loadJournal(earlier = false) {
   const ticket = ++journalRequest;
@@ -355,32 +450,55 @@ async function loadJournal(earlier = false) {
     if (ticket === journalRequest && drawer === "journal") text("notice", "Could not load the journal. Reopen it to retry.");
   } finally { if (ticket === journalRequest) el("older").disabled = false; }
 }
+function closeMenu() {
+  if (el("menu").hidden) return;
+  el("menu").hidden = true;
+  el("menu-button").setAttribute("aria-expanded", "false");
+  quitArmed = false;
+  text("quit", "End session");
+}
+function markDrawer(name) {
+  for (const id of ["bag", "organize"]) el(id).setAttribute("aria-expanded", String(name === "bag"));
+  el("history").setAttribute("aria-expanded", String(name === "journal"));
+  el("tab-bag").setAttribute("aria-pressed", String(name === "bag"));
+  el("tab-journal").setAttribute("aria-pressed", String(name === "journal"));
+}
 function closeDrawer() {
   ++journalRequest;
   drawer = "";
+  moving = null;
   el("drawer").hidden = true;
-  el("bag").setAttribute("aria-expanded", "false");
-  el("history").setAttribute("aria-expanded", "false");
-  const trigger = drawerTrigger?.isConnected ? drawerTrigger : el("command");
+  el("scrim").hidden = true;
+  markDrawer("");
+  const trigger = drawerTrigger?.isConnected && drawerTrigger.offsetParent ? drawerTrigger : el("command");
   trigger.focus({preventScroll: true});
 }
-function openDrawer(name, trigger) {
-  if (drawer === name) { closeDrawer(); return; }
+function openDrawer(name, trigger, toggle = true) {
+  if (drawer === name) {
+    if (toggle) closeDrawer();
+    return;
+  }
+  closeMenu();
+  ++journalRequest;
+  if (!drawer) drawerTrigger = trigger; // Switching tabs returns focus to whatever opened the drawer.
   drawer = name;
+  moving = null;
   el("memories").hidden = name !== "journal" || !state?.room.lessons.length;
-  drawerTrigger = trigger;
+  el("trail-line").hidden = name !== "journal" || !state?.room.trail.length;
   el("drawer").hidden = false;
+  el("scrim").hidden = false;
+  el("drawer").scrollTop = 0;
   el("older").hidden = true;
-  el("bag").setAttribute("aria-expanded", String(name === "bag"));
-  el("history").setAttribute("aria-expanded", String(name === "journal"));
-  text("drawer-title", {bag: "Inventory", journal: "Journal", guide: "Command guide"}[name]);
+  markDrawer(name);
+  text("drawer-title", {bag: "What you carry", journal: "Journal", guide: "Command guide", session: "Session details"}[name]);
   if (name === "bag") renderBag();
   if (name === "journal") {
     el("drawer-body").replaceChildren(node("p", "Opening the journal…"));
     loadJournal();
   }
   if (name === "guide") el("drawer-body").replaceChildren(node("p",
-    "Describe what you want to try. Click a detail to examine it or an exit to move. You can take and drop items, search a landmark, or use something you carry on something in the room. “Look at yourself” paints a portrait of what you have on. Type “help” for the full command list or “quit” to end this session."));
+    "Describe what you want to try. Select a detail to examine it or an exit to move. You can take and drop items, search a landmark, or use something you carry on something in the room. “Look at yourself” paints a portrait of what you have on. Type “help” for the full command list or “quit” to end this session."));
+  if (name === "session") renderSession();
   controls();
   el("close").focus();
 }
@@ -424,6 +542,8 @@ function submit(command, typed = false) {
   outbox = {id: crypto.randomUUID(), after: state.turn, command: command.trim()};
   remember("outbox", JSON.stringify(outbox));
   if (typed) {
+    lastTyped = command.trim();
+    remember("last-typed", lastTyped);
     el("command").value = "";
     remember("draft", null);
   }
@@ -447,7 +567,7 @@ async function previewNomination() {
     text("notice", error.message || "Could not preview the nomination. Try again.");
   } finally {
     loadingNomination = false;
-    el("nominate").disabled = false;
+    el("nominate").disabled = !state?.room.can_nominate;
   }
 }
 function renderState(next) {
@@ -459,7 +579,9 @@ function renderState(next) {
   if (outbox && (state.latest?.id === outbox.id || state.pending?.id === outbox.id ||
       (acknowledged && state.turn > outbox.after))) forgetRequest();
   if (changed) {
-    const hadFocus = document.activeElement?.matches("[data-command], #guide");
+    const hadFocus = document.activeElement?.matches("[data-command]");
+    moving = null;
+    rememberTurn();
     renderRoom(state.room);
     if (hadFocus && document.activeElement === document.body) el("command").focus({preventScroll: true});
     if (drawer === "bag") renderBag();
@@ -470,7 +592,8 @@ function renderState(next) {
   renderAvatar(state.avatar);
   renderSave(state.save);
   renderUsage(state.tokens);
-  renderEntry(state.pending || state.latest);
+  renderLog();
+  if (drawer === "session") renderSession();
   controls();
   if (choiceChanged) renderCharacter(state.choosing);
 }
@@ -501,8 +624,39 @@ el("character-form").onsubmit = beginCharacter;
 el("character-description").oninput = saveCharacterDraft;
 el("command").oninput = () => remember("draft", el("command").value);
 el("bag").onclick = () => openDrawer("bag", el("bag"));
+el("organize").onclick = () => openDrawer("bag", el("organize"));
 el("history").onclick = () => openDrawer("journal", el("history"));
-el("nominate").onclick = previewNomination;
+el("tab-bag").onclick = () => openDrawer("bag", null, false);
+el("tab-journal").onclick = () => openDrawer("journal", null, false);
+el("guide").onclick = () => openDrawer("guide", el("menu-button"));
+el("guide-link").onclick = () => openDrawer("guide", el("guide-link"));
+el("session").onclick = () => openDrawer("session", el("menu-button"));
+el("session-link").onclick = () => openDrawer("session", el("session-link"));
+el("scrim").onclick = closeDrawer;
+el("menu").addEventListener("click", e => { if (e.target.closest("a")) closeMenu(); });
+el("menu-button").onclick = () => {
+  if (!el("menu").hidden) { closeMenu(); return; }
+  el("menu").hidden = false;
+  el("menu-button").setAttribute("aria-expanded", "true");
+};
+el("quit").onclick = () => {
+  // Ending the session takes a second press so a stray tap cannot stop the game.
+  if (!quitArmed) {
+    quitArmed = true;
+    text("quit", "End session? Select again to confirm");
+    return;
+  }
+  closeMenu();
+  submit("quit");
+};
+document.addEventListener("click", e => { if (!e.target.closest(".menu-wrap")) closeMenu(); });
+el("command").addEventListener("keydown", e => {
+  if (e.key !== "ArrowUp" || el("command").value || !lastTyped) return;
+  e.preventDefault();
+  el("command").value = lastTyped;
+  remember("draft", lastTyped);
+});
+el("nominate").onclick = () => { closeMenu(); previewNomination(); };
 el("download-nomination").onclick = () => {
   const url = URL.createObjectURL(new Blob([nominationText], {type: "application/json"}));
   const link = document.createElement("a");
@@ -514,7 +668,17 @@ el("download-nomination").onclick = () => {
 };
 el("close").onclick = closeDrawer;
 el("older").onclick = () => loadJournal(true);
-document.addEventListener("keydown", e => { if (e.key === "Escape" && drawer) closeDrawer(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !el("menu").hidden) {
+    closeMenu();
+    el("menu-button").focus();
+  } else if (e.key === "Escape" && drawer) closeDrawer();
+  else if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !document.querySelector("dialog[open]") &&
+      !e.target.closest?.("input, textarea, select")) {
+    e.preventDefault();
+    el("command").focus();
+  }
+});
 el("avatar-retry").onclick = async () => {
   try {
     await fetch("/retry/" + state.avatar.key, {method: "POST"});
