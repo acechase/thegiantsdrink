@@ -270,7 +270,9 @@ class GameState:
         room = world_map[self.current_room]
         tool = find_object(tool_name, self.inventory)
         if not tool:
-            return f"You need to be carrying the {tool_name} first."
+            if find_object(tool_name, room.items) or room.landmark(tool_name):
+                return f"You need to be carrying the {tool_name} first."
+            return self.investigate(target_name, world_map, command, report=report)
         target = find_object(target_name, [*room.scenery, *room.items, *self.inventory])
         if not target:
             return self.investigate(target_name, world_map, command, tool=tool, report=report)
@@ -330,7 +332,8 @@ class GameState:
             prompt = "You're holding the rusty sword. What would you like to use it on?"
             return self._improvise(item, prompt, world_map, command, report)
         if item.name == "candle":
-            return "You lift the candle. Its flame throws your shadow across the room."
+            prompt = "You lift the candle. Its flame throws your shadow across the room."
+            return self._improvise(item, prompt, world_map, command, report)
         if item.usable:
             if "potion" in item.name.lower():
                 self.inventory.remove(item)
@@ -353,9 +356,11 @@ class GameState:
                             "When you lower the vial the giant is still waiting.")
                 return "There is no one here to use this on."
             elif "shield" in item.name.lower():
-                return "You raise the silver shield. It might protect you in battle."
+                prompt = "You raise the silver shield. It might protect you in battle."
+                return self._improvise(item, prompt, world_map, command, report)
             elif "torch" in item.name.lower():
-                return "The torch flares brightly, pushing shadows to the walls."
+                prompt = "The torch flares brightly, pushing shadows to the walls."
+                return self._improvise(item, prompt, world_map, command, report)
             elif "helm" in item.name.lower():
                 if item.name in self.worn:
                     return f"The {item.name} is already on your head."

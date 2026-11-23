@@ -10,6 +10,7 @@ import main
 from characters import MAX_DESCRIPTION, PRESETS, STOCK, CharacterError, clean, make, presets_public
 from environment_actions import resolve_environment
 from game_session import GameSession
+from game_world import Item
 from room_companion import Avatar
 from saves import SaveSlot
 from tests.test_game import openai_api  # noqa: F401 - fixture
@@ -67,6 +68,64 @@ def test_environment_adjudicator_receives_character_description(monkeypatch):
     prompt, payload = complete.call_args.args
     assert json.loads(payload)["player"] == session.game.character.description
     assert "physical plausibility and fit" in prompt
+
+
+def test_body_part_tool_reaches_the_adjudicator_without_a_held_tool(monkeypatch):
+    session = GameSession()
+    session.game.character = make("girl")
+    parse = Mock(return_value='{"action":"use_on","tool":"braid","target":"candle"}')
+    reply = "The candle is too hot to wrap your braid around."
+    complete = Mock(return_value=json.dumps({"effect": "observe", "anchor": "candle", "reply": reply}))
+    monkeypatch.setattr("command_parser.complete", parse)
+    monkeypatch.setattr("environment_actions.complete", complete)
+    command = "wrap my braid around the candle"
+
+    assert session.turn(command)[-1].text == reply
+    parse.assert_called_once()
+    complete.assert_called_once()
+    payload = json.loads(complete.call_args.args[1])
+    assert payload["attempt"] == command and payload["subject"] == "candle"
+    assert payload["held_tool"] is None and payload["player"] == session.game.character.description
+
+
+@pytest.mark.parametrize("tool", ["sword", "shelf"])
+def test_tool_in_the_room_must_be_carried_first(monkeypatch, tool):
+    session = GameSession()
+    complete = Mock(side_effect=AssertionError("A tool in the room must be carried first."))
+    monkeypatch.setattr("environment_actions.complete", complete)
+
+    assert session.turn(f"use {tool} on candle")[-1].text == f"You need to be carrying the {tool} first."
+    complete.assert_not_called()
+
+
+@pytest.mark.parametrize(("item", "command", "authored", "reply"), [
+    ("candle", "tuck the candle into my braid", "You lift the candle. Its flame throws your shadow across the room.",
+     "The flame would singe your braid."),
+    ("silver shield", "balance the shield on my hand", "You raise the silver shield. It might protect you in battle.",
+     "The shield tips to one side."),
+    ("torch", "hold the torch behind my back", "The torch flares brightly, pushing shadows to the walls.",
+     "You feel the torch's heat against your back."),
+])
+def test_carried_items_keep_bare_use_and_adjudicate_described_use(monkeypatch, item, command, authored, reply):
+    session = GameSession()
+    session.game.character = make("girl")
+    if item == "candle":
+        session.turn("take candle")
+    else:
+        session.game.inventory.append(Item(item, "An item from the castle.", usable=True))
+    parse = Mock(return_value=json.dumps({"action": "use", "target": item}))
+    complete = Mock(return_value=json.dumps({"effect": "observe", "anchor": item, "reply": reply}))
+    monkeypatch.setattr("command_parser.complete", parse)
+    monkeypatch.setattr("environment_actions.complete", complete)
+
+    assert session.turn(f"use {item}")[-1].text == authored
+    parse.assert_not_called()
+    complete.assert_not_called()
+    assert session.turn(command)[-1].text == reply
+    parse.assert_called_once()
+    complete.assert_called_once()
+    payload = json.loads(complete.call_args.args[1])
+    assert payload["attempt"] == command and payload["subject"] == item
 
 
 @pytest.mark.parametrize(("options", "expected"), [
