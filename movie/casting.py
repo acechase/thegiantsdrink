@@ -110,7 +110,8 @@ def cast_narrator(character, slot, voice=None, report=print):
         if not voice and (not cast.get("voice") or cast.get("designed_from") != cast["voice_prompt"]):
             cast["voice"] = _design(cast, slot, report)
             cast["designed_from"] = cast["voice_prompt"]
-        narrator = Narrator(voice or cast["voice"], DIRECTIONS["narrator"], False)
+        designed = (voice or cast["voice"]).startswith("voice_")
+        narrator = Narrator(voice or cast["voice"], "" if designed else DIRECTIONS["narrator"], False)
     try:
         write_atomic(path, (json.dumps(cast, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     except OSError as exc:

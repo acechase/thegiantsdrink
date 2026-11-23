@@ -94,11 +94,12 @@ def _wav(part):
 
 
 def _speech(model, voice, text, direction):
+    passage = {"type": "text", "text": text}
+    if direction:  # A designed voice already carries its character, so it may speak without a style note.
+        passage["annotations"] = [{"type": "speech_metadata", "style": direction}]
     return {
         "model": model,
-        "input": [{"type": "user_input", "content": [
-            {"type": "text", "text": text, "annotations": [{"type": "speech_metadata", "style": direction}]},
-        ]}],
+        "input": [{"type": "user_input", "content": [passage]}],
         "response_format": {"type": "audio"},
         "generation_config": {"speech_config": [{"voice": voice}]},
     }

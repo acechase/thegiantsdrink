@@ -12,7 +12,7 @@ from characters import make
 from movie import run
 from movie.casting import CHILD_DIRECTION, Narrator, cast_narrator
 from movie.screenplay import MovieError, draft, journal, read_screenplay, scene_art
-from movie.voices import DIRECTIONS, FLASH, FLASH_LITE, GEMINI_URL, Cast, VoiceRenderer, design_voice, narrator_for
+from movie.voices import FLASH, FLASH_LITE, GEMINI_URL, Cast, VoiceRenderer, design_voice, narrator_for
 
 ART = "a" * 64
 
@@ -118,7 +118,7 @@ def test_adult_character_gets_one_designed_voice(monkeypatch, tmp_path):
                  json={"id": "voice_cook", "sample_audio": {"data": base64.b64encode(sample).decode()}})
         narrator = cast_narrator(SAILOR, tmp_path, report=lambda message: None)
         sent = json.loads(api.calls[0].request.body)["voice"]
-    assert narrator == Narrator("voice_cook", DIRECTIONS["narrator"], False)
+    assert narrator == Narrator("voice_cook", "", False)
     assert sent["prompted"] == {"input": SAILOR_CAST["voice"]}
     assert (sent["language_code"], sent["gender"]) == ("en-GB", "male")
     assert (tmp_path / "narrator-voice.wav").read_bytes() == sample
@@ -146,6 +146,25 @@ def test_declined_voice_design_falls_back_once(monkeypatch, tmp_path):
     assert "blocked by safety policies" in messages[-1]
     with responses.RequestsMock():
         assert cast_narrator(SAILOR, tmp_path).voice == "Despina"
+
+
+def test_designed_voice_speaks_without_a_default_style(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    wav = _wave()
+    turns = journal({"journal": _journal()})
+    plain, whisper = read_screenplay({"title": "Keeper", "scenes": [
+        {"title": "Tide", "turns": [2], "text": "The tide's out."},
+        {"title": "Hush", "turns": [2], "text": "Quiet now.", "direction": "Whisper."},
+    ]}, turns).scenes
+    result = {"steps": [{"type": "model_output", "content": [{"type": "audio", "data": base64.b64encode(wav).decode()}]}]}
+    with responses.RequestsMock() as api:
+        api.post(f"{GEMINI_URL}/interactions", json=result)
+        renderer = VoiceRenderer(tmp_path, Cast("voice_keeper", narrator_direction=""), report=lambda message: None)
+        renderer.take(plain)
+        renderer.take(whisper)
+        first, second = (json.loads(call.request.body)["input"][0]["content"][0] for call in api.calls)
+    assert first == {"type": "text", "text": "The tide's out."}
+    assert second["annotations"] == [{"type": "speech_metadata", "style": "Whisper."}]
 
 
 def test_gemini_quota_fallback_and_offline_reuse(monkeypatch, tmp_path):

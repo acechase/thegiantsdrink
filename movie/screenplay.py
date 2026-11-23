@@ -28,9 +28,10 @@ The narrator is the player character described before the journal. Always write 
 where the journal describes the player differently. A child sounds like a real kid telling a friend what happened:
 short sentences, everyday words, plain comparisons, the details a kid notices, and no grown-up or poetic turns of
 phrase. An adult sounds like that particular person: let their age, background, region and temperament show in word
-choice, idiom and rhythm. Begin every narrator direction with "Tell a friend what happened. Use your everyday speaking
-voice." Add at most one short note after it, and only when a moment truly needs a different delivery, such as a
-whisper. Never describe the narrator's voice itself in a direction.
+choice, idiom and rhythm. Begin every direction for a child narrator with "Tell a friend what happened. Use your
+everyday speaking voice." Leave an adult narrator's direction empty, because their voice is cast to fit them. Add at
+most one short note, and only when a moment truly needs a different delivery, such as a whisper. Never describe the
+narrator's voice itself in a direction.
 
 Return a single JSON object with these keys:
 {"title":"Film title","scenes":[{"title":"Chapter label","turns":[1,3],"art":[3],"speaker":"narrator",
