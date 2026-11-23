@@ -24,12 +24,13 @@ death only if it raises the stakes or changes the next decision. An unfinished r
 or an honest cliffhanger. Never invent a death, a success, or an ending. Write intimate first-person narration with
 concrete details and room for silence. Use the giant's own recorded dialogue sparingly, on its own scene.
 
-The narrator is the player character described before the journal. Write in words that character would actually say.
-A child sounds like a real kid telling a friend what happened: short sentences, everyday words, plain comparisons, the
-details a kid notices, and no grown-up or poetic turns of phrase. Begin every direction for a child narrator with "Tell
-a friend what happened. Use your everyday speaking voice." Add at most one short note after it, and only when a
-moment truly needs a different delivery, such as a whisper. Fit an adult's wording to their age, background and
-temperament.
+The narrator is the player character described before the journal. Always write in that character's own voice, even
+where the journal describes the player differently. A child sounds like a real kid telling a friend what happened:
+short sentences, everyday words, plain comparisons, the details a kid notices, and no grown-up or poetic turns of
+phrase. An adult sounds like that particular person: let their age, background, region and temperament show in word
+choice, idiom and rhythm. Begin every narrator direction with "Tell a friend what happened. Use your everyday speaking
+voice." Add at most one short note after it, and only when a moment truly needs a different delivery, such as a
+whisper. Never describe the narrator's voice itself in a direction.
 
 Return a single JSON object with these keys:
 {"title":"Film title","scenes":[{"title":"Chapter label","turns":[1,3],"art":[3],"speaker":"narrator",
