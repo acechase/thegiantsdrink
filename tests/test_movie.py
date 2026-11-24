@@ -12,7 +12,7 @@ from characters import make
 from movie import run
 from movie.casting import CHILD_DIRECTION, Narrator, cast_narrator
 from movie.screenplay import MovieError, draft, journal, read_screenplay, scene_art
-from movie.voices import FLASH, FLASH_LITE, GEMINI_URL, Cast, VoiceRenderer, design_voice, narrator_for
+from movie.voices import DIRECTIONS, FLASH, FLASH_LITE, GEMINI_URL, Cast, VoiceRenderer, design_voice, narrator_for
 
 ART = "a" * 64
 
@@ -156,7 +156,8 @@ def test_designed_voice_speaks_without_a_default_style(monkeypatch, tmp_path):
         {"title": "Tide", "turns": [2], "text": "The tide's out."},
         {"title": "Hush", "turns": [2], "text": "Quiet now.", "direction": "Whisper."},
     ]}, turns).scenes
-    result = {"steps": [{"type": "model_output", "content": [{"type": "audio", "data": base64.b64encode(wav).decode()}]}]}
+    audio = {"type": "audio", "data": base64.b64encode(wav).decode()}
+    result = {"steps": [{"type": "model_output", "content": [audio]}]}
     with responses.RequestsMock() as api:
         api.post(f"{GEMINI_URL}/interactions", json=result)
         renderer = VoiceRenderer(tmp_path, Cast("voice_keeper", narrator_direction=""), report=lambda message: None)
@@ -165,6 +166,22 @@ def test_designed_voice_speaks_without_a_default_style(monkeypatch, tmp_path):
         first, second = (json.loads(call.request.body)["input"][0]["content"][0] for call in api.calls)
     assert first == {"type": "text", "text": "The tide's out."}
     assert second["annotations"] == [{"type": "speech_metadata", "style": "Whisper."}]
+
+
+def test_giant_default_style_only_for_prebuilt_voices(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    line = read_screenplay({"title": "Giant", "scenes": [
+        {"title": "Offer", "turns": [2], "speaker": "giant", "text": "Choose."},
+    ]}, journal({"journal": _journal()})).scenes[0]
+    audio = {"type": "audio", "data": base64.b64encode(_wave()).decode()}
+    result = {"steps": [{"type": "model_output", "content": [audio]}]}
+    with responses.RequestsMock() as api:
+        api.post(f"{GEMINI_URL}/interactions", json=result)
+        VoiceRenderer(tmp_path, Cast(giant="voice_rumble"), report=lambda message: None).take(line)
+        VoiceRenderer(tmp_path, Cast(), report=lambda message: None).take(line)
+        designed, prebuilt = (json.loads(call.request.body)["input"][0]["content"][0] for call in api.calls)
+    assert "annotations" not in designed
+    assert prebuilt["annotations"][0]["style"] == DIRECTIONS["giant"]
 
 
 def test_gemini_quota_fallback_and_offline_reuse(monkeypatch, tmp_path):

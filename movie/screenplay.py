@@ -31,7 +31,7 @@ phrase. An adult sounds like that particular person: let their age, background, 
 choice, idiom and rhythm. Begin every direction for a child narrator with "Tell a friend what happened. Use your
 everyday speaking voice." Leave an adult narrator's direction empty, because their voice is cast to fit them. Add at
 most one short note, and only when a moment truly needs a different delivery, such as a whisper. Never describe the
-narrator's voice itself in a direction.
+narrator's voice itself in a direction. Leave the giant's direction empty.
 
 Return a single JSON object with these keys:
 {"title":"Film title","scenes":[{"title":"Chapter label","turns":[1,3],"art":[3],"speaker":"narrator",

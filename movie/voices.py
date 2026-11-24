@@ -158,7 +158,10 @@ class VoiceRenderer:
     def take(self, scene):
         """Return the WAV path for the selected speaker and exact passage."""
         voice = getattr(self.cast, scene.speaker)
-        default = self.cast.narrator_direction if scene.speaker == "narrator" else DIRECTIONS[scene.speaker]
+        if scene.speaker == "narrator":
+            default = self.cast.narrator_direction
+        else:  # A designed giant carries its own character, so it needs no default style note.
+            default = "" if voice.startswith("voice_") else DIRECTIONS[scene.speaker]
         direction = scene.direction or default
         candidates = []
         for model in self.models:

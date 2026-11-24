@@ -148,7 +148,8 @@ def _move(image, frame, count, motion):
 def _audio(scene, voices):
     if scene.text and voices:
         path = voices.take(scene)
-        pcm = _run(["-i", path, "-af", "highpass=f=75,loudnorm=I=-20:LRA=11:TP=-3",
+        floor = 30 if scene.speaker == "giant" else 75  # Keep the giant's lowest rumble.
+        pcm = _run(["-i", path, "-af", f"highpass=f={floor},loudnorm=I=-20:LRA=11:TP=-3",
                     "-ar", SAMPLE_RATE, "-ac", 2, "-f", "s16le", "pipe:1"])
         spoken = math.ceil(len(pcm) / FRAME_BYTES)
     else:

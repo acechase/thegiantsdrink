@@ -175,6 +175,9 @@ You can create an original giant voice using Gemini Voice Design:
 ./.venv/bin/python main.py movie export --giant-voice voice_YOUR_ID
 ```
 
+To make a designed voice darker or deeper, remix it in Gemini with a description of the change and use the new
+voice ID. Designed voices speak without a default style note, and the giant keeps its lowest frequencies in the mix.
+
 Use `MOVIE_GIANT_VOICE` or `MOVIE_NARRATOR_VOICE` in `.env` to keep a casting choice for future exports.
 `movie design-voice` stores the voice in your Gemini project and shows its reusable ID. Without `--preview`,
 the WAV preview goes in `saves/voice-previews/` when Gemini supplies one.
